@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>報連相AI 管理画面</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+/*__BASE_CSS__*/
+/* Layout: 紺のヘッダーとタブ → ページの見出し（対象スペース）→ 数字 → 止まっている所・次に動く人 → 決まったこと・最近の動き → 案件の一覧（ステータス別） */
+.view-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;justify-content:space-between}
+.view-head h2{font-size:20px;font-weight:600;letter-spacing:.02em}
+.view-head .lead{font-size:13px;color:var(--ink-2);margin-top:2px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line-2);color:var(--ink-2);background:var(--surface);white-space:nowrap}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.chip{min-height:28px;cursor:pointer}
+.kpi.crit .val{color:var(--crit)} .kpi.warn .val{color:var(--warn)} .kpi.good .val{color:var(--good)}
+.list{display:grid}
+.li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:10px 0;border-top:1px solid var(--line)}
+.li:first-child{border-top:0}
+.li .t{font-weight:500;overflow-wrap:anywhere}
+.li .s{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.li .r{text-align:right;font-size:12px;color:var(--muted);white-space:nowrap}
+.days{font-family:var(--mono);font-size:18px;font-weight:600;color:var(--crit);line-height:1.1}
+.days small{font-family:var(--font);font-size:11px;font-weight:400;color:var(--muted);margin-left:2px}
+/* 案件カード */
+.cases{display:grid;gap:12px}
+.case{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--line-2);border-radius:0 10px 10px 0;padding:14px 16px;display:grid;gap:10px;min-width:0}
+.case.s-要確認{border-left-color:var(--crit)} .case.s-フォロー{border-left-color:#d9a21b} .case.s-Good{border-left-color:var(--good)} .case.s-完了{border-left-color:var(--line-2)}
+.case-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.case-top .ttl{font-size:15px;font-weight:600;margin-right:auto;overflow-wrap:anywhere}
+.case-meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px}
+.case-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px 20px}
+.case-grid .lab{font-size:11px;color:var(--muted);letter-spacing:.04em;margin-bottom:2px}
+.case-grid ul{margin:0;padding-left:1.1em;display:grid;gap:2px}
+.case-grid .box{min-width:0;overflow-wrap:anywhere}
+.next{background:var(--info-bg);border-radius:8px;padding:8px 10px;font-size:13px}
+.stall{background:var(--crit-bg);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--crit)}
+.why{font-size:12px;color:var(--ink-2)}
+details.hist summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.tl{list-style:none;margin:8px 0 0;padding:0 0 0 14px;border-left:2px solid var(--line);display:grid;gap:8px}
+.tl li{position:relative;font-size:13px}
+.tl li::before{content:"";position:absolute;left:-19px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--line-2)}
+.tl .d{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.overdue{color:var(--crit);font-weight:600}
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}
+.pcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:8px;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.pcard:hover{border-color:var(--accent)}
+.pcard .nm{font-weight:600;font-size:15px}
+.pcard .cnt{display:flex;gap:6px;flex-wrap:wrap}
+.pcard .top{font-size:12px;color:var(--ink-2);display:grid;gap:2px}
+.empty-big{background:var(--surface);border:1px dashed var(--line-2);border-radius:10px;padding:28px 20px;text-align:center;color:var(--ink-2)}
+.empty-big b{display:block;font-size:15px;color:var(--ink);margin-bottom:4px}
+td.tw{min-width:200px;overflow-wrap:anywhere}
+table.mx td,table.mx th{text-align:center}
+table.mx td:first-child,table.mx th:first-child{text-align:left}
+</style></head><body>
+__APPBAR__
+<main class="wrap" id="view" aria-live="polite"></main>
+<div id="tip" role="tooltip"></div>
+<script>
+(function(){
+  "use strict";
+  // ===== データ（Streamlit が台帳から読み込んで埋め込む） =====
+  var CASES = __CASES__, LOGS = __LOGS__, LINKS = __LINKS__, PAGES = __PAGES__, CLIENTS = __CLIENTS__;
+  var INITIAL_TAB = __TAB__, LEDGER_URL = __LEDGER_URL__;
+
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
+  function pad(n){ return (n < 10 ? "0" : "") + n; }
+  function ymd(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
+  function md(s){ var m = String(s || "").match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); return m ? (+m[2]) + "/" + (+m[3]) : String(s || ""); }
+  function toDate(s){ var m = String(s || "").match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; }
+  function bizDays(from){                                   // 止まり始めた日から今日までの営業日数（土日を除く）
+    var d = toDate(from); if (!d) return null;
+    var t = new Date(); t = new Date(t.getFullYear(), t.getMonth(), t.getDate()); var n = 0;
+    while (d < t){ d.setDate(d.getDate() + 1); var w = d.getDay(); if (w !== 0 && w !== 6) n++; }
+    return n;
+  }
+  function daysAgo(s){ var d = toDate(s); if (!d) return 9999; var t = new Date(); return Math.floor((new Date(t.getFullYear(), t.getMonth(), t.getDate()) - d) / 86400000); }
+  function lines(t){ return String(t || "").split("\n").map(function(x){ return x.replace(/^[・\-\s]+/, "").trim(); }).filter(Boolean); }
+  function uniq(a){ return Array.from(new Set(a)).filter(function(x){ return x !== "" && x != null; }); }
+  var TODAY = ymd(new Date());
+
+  // ===== 案件の整形 =====
+  var STATUS = ["要確認", "フォロー", "Good", "完了"];
+  var PILL = { "要確認": "crit", "フォロー": "warn", "Good": "good", "完了": "flat" };
+  var ICON = { "要確認": "🔴", "フォロー": "🟡", "Good": "🟢", "完了": "✅" };
+  var cases = CASES.filter(function(r){ return r["案件ID"]; }).map(function(r){
+    var st = STATUS.filter(function(s){ return String(r["ステータス"] || "").indexOf(s) >= 0; })[0] || "フォロー";
+    var c = {
+      id: r["案件ID"], status: st, title: r["件名"] || "（件名なし）", client: r["クライアントID"] || "", space: r["スペース"] || "", spaceId: r["スペースID"] || "",
+      situation: r["今の状況"] || "", decided: lines(r["決まったこと"]), unresolved: lines(r["未解決のこと"]),
+      nextWho: r["次に動く人"] || "", nextWhat: r["次にやること"] || "", due: r["期限"] || "",
+      stalledAt: r["止まっている所"] || "", stalledSince: r["止まり始めた日"] || "",
+      reason: r["判定の理由"] || "", goodReason: r["Goodの理由"] || "", people: r["関係者"] || "",
+      started: r["開始日"] || "", updated: r["最終更新日"] || "", check: r["確認状況"] || "未確認", memo: r["確認メモ"] || "", checker: r["確認者"] || ""
+    };
+    var n = parseInt(r["止まっている営業日数"], 10);
+    c.days = c.stalledAt ? (isNaN(n) ? bizDays(c.stalledSince) : n) : null;
+    c.closedByHuman = c.check === "クローズ";
+    c.open = (st === "要確認" || st === "フォロー") && !c.closedByHuman;
+    var dd = String(c.due).match(/\d{4}-\d{2}-\d{2}/);
+    c.overdue = c.open && dd && dd[0] < TODAY;
+    return c;
+  });
+  var logsBy = {};
+  LOGS.forEach(function(l){ var id = l["案件ID"]; if (!id) return; (logsBy[id] = logsBy[id] || []).push(l); });
+  var clientName = {}; CLIENTS.forEach(function(c){ clientName[c["クライアントID"]] = c["会社名"]; });
+  var persons = PAGES.filter(function(p){ return p["種類"] === "人" && p["ページ名"]; }).map(function(p){ return p["ページ名"]; });
+  var clientIds = CLIENTS.filter(function(c){ return c["クライアントID"] && c["会社名"] && !/記入例/.test(c["会社名"]); }).map(function(c){ return c["クライアントID"]; });
+  function spacesOf(type, target){ return LINKS.filter(function(l){ return l["種類"] === type && l["対象（ページ名 または クライアントID）"] === target; }); }
+  function rank(c){ return (c.open ? 0 : 1) * 10 + STATUS.indexOf(c.status); }
+  function sortCases(a, b){ return rank(a) - rank(b) || (b.days || 0) - (a.days || 0) || String(b.updated).localeCompare(String(a.updated)); }
+
+  // ===== 部品 =====
+  function pill(st){ return '<span class="pill ' + PILL[st] + '">' + ICON[st] + " " + esc(st) + '</span>'; }
+  function kpi(label, v, tone, note){ return '<div class="kpi ' + (tone || "") + '"><div class="lab">' + label + '</div><div class="val num">' + v + '</div><div class="meta">' + (note || "") + '</div></div>'; }
+  function panel(title, note, body){ return '<section class="panel"><div class="panel-head"><h2>' + title + '</h2>' + (note ? '<span class="note">' + note + '</span>' : "") + '</div>' + body + '</section>'; }
+  function spaceLabel(c){
+    var cn = c.client && clientName[c.client];
+    return esc(c.space) + (cn && String(c.space).indexOf(cn.replace(/様$/, "")) < 0 ? "・" + esc(cn) : "");
+  }
+
+  function caseCard(c, showClient){
+    var hist = (logsBy[c.id] || []).slice().sort(function(a, b){ return String(b["記録日"]).localeCompare(String(a["記録日"])); });
+    var body = "";
+    body += '<div class="box"><div class="lab">今の状況</div>' + esc(c.situation || "–") + '</div>';
+    if (c.decided.length) body += '<div class="box"><div class="lab">決まったこと</div><ul>' + c.decided.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>';
+    if (c.unresolved.length) body += '<div class="box"><div class="lab">未解決のこと</div><ul>' + c.unresolved.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>';
+    var extra = "";
+    if (c.open && c.nextWho) extra += '<div class="next"><b>次に動く人：' + esc(c.nextWho) + '</b>　' + esc(c.nextWhat) + '　<span class="' + (c.overdue ? "overdue" : "") + '">期限 ' + esc(c.due || "未定") + (c.overdue ? "（期限切れ）" : "") + '</span></div>';
+    if (c.open && c.stalledAt) extra += '<div class="stall"><b>止まっている所：</b>' + esc(c.stalledAt) + (c.days != null ? '　<b>' + c.days + '営業日</b>（' + esc(md(c.stalledSince)) + '〜）' : "") + '</div>';
+    var why = c.status === "Good" && c.goodReason ? "Goodの理由：" + c.goodReason : (c.reason ? "判定の理由：" + c.reason : "");
+    return '<article class="case s-' + c.status + '">' +
+      '<div class="case-top">' + pill(c.status) + '<span class="ttl">' + esc(c.title) + '</span>' +
+        (c.closedByHuman ? '<span class="pill flat">クローズ（人）</span>' : '<span class="pill ' + (c.check === "未確認" ? "info" : "flat") + '">' + esc(c.check) + '</span>') + '</div>' +
+      '<div class="case-meta"><span>' + spaceLabel(c) + '</span>' + (c.people ? '<span>関係者：' + esc(c.people) + '</span>' : "") +
+        '<span>開始 ' + esc(md(c.started)) + '</span><span>最終更新 ' + esc(md(c.updated)) + '</span>' + (c.memo ? '<span>メモ：' + esc(c.memo) + (c.checker ? "（" + esc(c.checker) + "）" : "") + '</span>' : "") + '</div>' +
+      '<div class="case-grid">' + body + '</div>' + extra +
+      (why ? '<div class="why">' + esc(why) + '</div>' : "") +
+      (hist.length ? '<details class="hist"><summary>経緯を見る（' + hist.length + '件）</summary><ul class="tl">' + hist.map(function(h){
+        var st = STATUS.filter(function(s){ return String(h["ステータス"]).indexOf(s) >= 0; })[0] || "";
+        return '<li><div class="d">' + esc(h["対象期間"] || md(h["記録日"])) + '　' + (st ? ICON[st] + " " + st : "") + '</div>' + esc(h["今の状況"] || "") +
+          (h["次に動く人"] ? '<div class="note">次：' + esc(h["次に動く人"]) + '：' + esc(h["次にやること"]) + '（' + esc(h["期限"] || "未定") + '）</div>' : "") + '</li>';
+      }).join("") + '</ul></details>' : "") +
+    '</article>';
+  }
+
+  // ===== 1つのページ（人・クライアント）の中身 =====
+  var S = { tab: INITIAL_TAB || "home", filter: "open", client: null };
+  function scopeView(opt){
+    var cs = opt.cases.slice().sort(sortCases);
+    var open = cs.filter(function(c){ return c.open; });
+    var nCrit = open.filter(function(c){ return c.status === "要確認"; }).length;
+    var nFol = open.filter(function(c){ return c.status === "フォロー"; }).length;
+    var stalled = open.filter(function(c){ return c.stalledAt; }).sort(function(a, b){ return (b.days || 0) - (a.days || 0); });
+    var nStall = stalled.filter(function(c){ return (c.days || 0) >= 2; }).length;
+    var good = cs.filter(function(c){ return c.status === "Good" && daysAgo(c.updated) <= 30; });
+    var h = "";
+    h += '<div class="view-head"><div><h2>' + esc(opt.title) + '</h2><div class="lead">' + esc(opt.lead) + '</div>' +
+         '<div class="chips">' + opt.spaces.map(function(s){ return '<span class="chip">' + esc(s) + '</span>'; }).join("") + '</div></div>' + (opt.side || "") + '</div>';
+    h += '<div class="grid-kpi">' +
+      kpi("🔴 要確認", nCrit + "<small>件</small>", nCrit ? "crit" : "", "上位者の確認が必要") +
+      kpi("🟡 フォロー", nFol + "<small>件</small>", nFol ? "warn" : "", "判断待ち・回答待ち・対応中") +
+      kpi("止まっている案件", nStall + "<small>件</small>", nStall ? "crit" : "", "2営業日以上動きがない") +
+      kpi("🟢 Good（30日）", good.length + "<small>件</small>", good.length ? "good" : "", "報連相が適切に完了") + '</div>';
+    if (!cs.length){
+      h += '<div class="empty-big"><b>まだ案件がありません</b>毎朝の分析で、ここに表示するスペースの会話が案件としてまとまると表示されます。</div>';
+      return h;
+    }
+    // 止まっている所・次に動く人
+    var whoRows = open.filter(function(c){ return c.nextWho; }).sort(function(a, b){ return (b.overdue - a.overdue) || String(a.due).localeCompare(String(b.due)); });
+    h += '<div class="two">' +
+      panel("どこで止まっているか", "長く止まっている順", stalled.length ? '<div class="list">' + stalled.slice(0, 8).map(function(c){
+        return '<div class="li"><div><div class="t">' + esc(c.stalledAt) + '</div><div class="s">' + esc(c.title) + '・' + spaceLabel(c) + '</div></div><div class="r"><div class="days">' + (c.days != null ? c.days : "–") + '<small>営業日</small></div>' + esc(md(c.stalledSince)) + '〜</div></div>';
+      }).join("") + '</div>' : '<p class="empty">止まっている案件はありません。</p>') +
+      panel("誰が次に動くか", "期限切れ・期限の近い順", whoRows.length ? '<div class="tscroll"><table style="min-width:420px"><thead><tr><th>担当</th><th>やること</th><th>期限</th></tr></thead><tbody>' + whoRows.slice(0, 12).map(function(c){
+        return '<tr><td class="nm"><b>' + esc(c.nextWho) + '</b></td><td class="tw">' + esc(c.nextWhat) + '<div class="note">' + esc(c.title) + '</div></td><td class="nm' + (c.overdue ? " overdue" : "") + '">' + esc(c.due || "未定") + (c.overdue ? "<br>期限切れ" : "") + '</td></tr>';
+      }).join("") + '</tbody></table></div>' : '<p class="empty">次に動く人が決まっている案件はありません。</p>') + '</div>';
+    // 決まったこと・最近の動き
+    var decided = []; cs.filter(function(c){ return daysAgo(c.updated) <= 14; }).forEach(function(c){ c.decided.forEach(function(d){ decided.push({ c: c, d: d }); }); });
+    var ids = {}; cs.forEach(function(c){ ids[c.id] = c; });
+    var recent = LOGS.filter(function(l){ return ids[l["案件ID"]] && daysAgo(l["記録日"]) <= 7; }).sort(function(a, b){ return String(b["記録日"]).localeCompare(String(a["記録日"])); });
+    h += '<div class="two">' +
+      panel("何が決まったか", "直近14日", decided.length ? '<div class="list">' + decided.slice(0, 10).map(function(x){
+        return '<div class="li"><div><div class="t">' + esc(x.d) + '</div><div class="s">' + esc(x.c.title) + '・' + spaceLabel(x.c) + '</div></div><div class="r">' + esc(md(x.c.updated)) + '</div></div>';
+      }).join("") + '</div>' : '<p class="empty">直近14日に決まったことはありません。</p>') +
+      panel("今どんなやり取りがされているか", "直近7日の動き", recent.length ? '<div class="list">' + recent.slice(0, 10).map(function(l){
+        var c = ids[l["案件ID"]], st = STATUS.filter(function(s){ return String(l["ステータス"]).indexOf(s) >= 0; })[0] || c.status;
+        return '<div class="li"><div><div class="t">' + ICON[st] + ' ' + esc(c.title) + '</div><div class="s">' + esc(l["今の状況"] || "") + '</div></div><div class="r">' + esc(l["対象期間"] || md(l["記録日"])) + '<br>' + esc(c.space) + '</div></div>';
+      }).join("") + '</div>' : '<p class="empty">直近7日の動きはありません。</p>') + '</div>';
+    if (opt.matrix) h += opt.matrix(cs);
+    // 案件の一覧
+    var F = [["open", "対応中（要確認・フォロー）"], ["要確認", "🔴 要確認"], ["フォロー", "🟡 フォロー"], ["Good", "🟢 Good"], ["完了", "✅ 完了"], ["all", "すべて"]];
+    var list = cs.filter(function(c){ return S.filter === "all" ? true : S.filter === "open" ? c.open : c.status === S.filter && (S.filter === "要確認" || S.filter === "フォロー" ? !c.closedByHuman : true); });
+    h += '<section class="panel"><div class="panel-head"><h2>案件の一覧</h2><div class="chips" role="group" aria-label="ステータスで絞り込む">' + F.map(function(f){
+      var n = cs.filter(function(c){ return f[0] === "all" ? true : f[0] === "open" ? c.open : c.status === f[0]; }).length;
+      return '<button type="button" class="chip' + (S.filter === f[0] ? " on" : "") + '" data-filter="' + f[0] + '" aria-pressed="' + (S.filter === f[0]) + '">' + f[1] + ' ' + n + '</button>';
+    }).join("") + '</div></div><div class="cases">' + (list.length ? list.map(function(c){ return caseCard(c, opt.showClient); }).join("") : '<p class="empty">この条件の案件はありません。</p>') + '</div></section>';
+    return h;
+  }
+
+  // ===== 各ページ =====
+  function personView(name){
+    var links = spacesOf("人", name), ids = links.map(function(l){ return l["スペースID（自動）"]; });
+    return scopeView({ title: name, lead: name + "に関係するチャットの案件をまとめて表示します。", spaces: uniq(links.map(function(l){ return l["スペース名"]; })),
+      cases: cases.filter(function(c){ return ids.indexOf(c.spaceId) >= 0; }), showClient: true });
+  }
+  function clientView(){
+    if (!clientIds.length) return '<div class="empty-big"><b>クライアントが登録されていません</b>管理台帳の「クライアント」タブに会社を登録すると、ここに表示されます。</div>';
+    if (clientIds.indexOf(S.client) < 0) S.client = clientIds[0];
+    var id = S.client, links = spacesOf("クライアント", id), sids = links.map(function(l){ return l["スペースID（自動）"]; });
+    var cs = cases.filter(function(c){ return c.client === id || sids.indexOf(c.spaceId) >= 0; });
+    var picker = '<div class="chips" role="group" aria-label="クライアントを選ぶ">' + clientIds.map(function(cid){
+      var n = cases.filter(function(c){ return c.open && c.client === cid; }).length;
+      return '<button type="button" class="chip' + (cid === id ? " on" : "") + '" data-client="' + esc(cid) + '">' + esc(clientName[cid]) + (n ? " " + n : "") + '</button>';
+    }).join("") + '</div>';
+    var spacesUsed = uniq(cs.map(function(c){ return c.space; }).concat(links.map(function(l){ return l["スペース名"]; })));
+    var h = '<section class="panel" style="padding:12px 16px"><div class="toolbar"><span class="note">クライアント</span>' + picker + '</div></section>';
+    return h + scopeView({ title: clientName[id] || id, lead: "社内外のチャットを横断して、この会社に関する案件をまとめて表示します。", spaces: spacesUsed, cases: cs, showClient: false,
+      matrix: function(all){
+        var sp = uniq(all.map(function(c){ return c.space; })); if (sp.length < 1) return "";
+        return panel("スペース（部署）ごとの状況", "この会社の案件が、どのチャットで動いているか", '<div class="tscroll"><table class="mx" style="min-width:520px"><thead><tr><th>スペース</th><th>🔴 要確認</th><th>🟡 フォロー</th><th>止まっている</th><th>🟢 Good</th><th>✅ 完了</th><th>最終更新</th></tr></thead><tbody>' + sp.map(function(s){
+          var a = all.filter(function(c){ return c.space === s; }), o = a.filter(function(c){ return c.open; });
+          var cnt = function(st){ return a.filter(function(c){ return c.status === st && (st === "要確認" || st === "フォロー" ? c.open : true); }).length; };
+          return '<tr><td class="nm">' + esc(s) + '</td><td class="num">' + cnt("要確認") + '</td><td class="num">' + cnt("フォロー") + '</td><td class="num">' + o.filter(function(c){ return (c.days || 0) >= 2; }).length + '</td><td class="num">' + cnt("Good") + '</td><td class="num">' + cnt("完了") + '</td><td class="num">' + esc(md(a.map(function(c){ return c.updated; }).sort().pop())) + '</td></tr>';
+        }).join("") + '</tbody></table></div>');
+      } });
+  }
+  function homeView(){
+    var open = cases.filter(function(c){ return c.open; });
+    var crit = open.filter(function(c){ return c.status === "要確認"; }).sort(sortCases);
+    var h = '<div class="view-head"><div><h2>ホーム</h2><div class="lead">ページごとの状況です。カードを押すと、そのページを開きます。</div></div></div>';
+    h += '<div class="grid-kpi">' +
+      kpi("🔴 要確認", crit.length + "<small>件</small>", crit.length ? "crit" : "", "全スペース合計") +
+      kpi("🟡 フォロー", open.filter(function(c){ return c.status === "フォロー"; }).length + "<small>件</small>", "warn", "判断待ち・回答待ち・対応中") +
+      kpi("止まっている案件", open.filter(function(c){ return (c.days || 0) >= 2; }).length + "<small>件</small>", "crit", "2営業日以上動きがない") +
+      kpi("🟢 Good（30日）", cases.filter(function(c){ return c.status === "Good" && daysAgo(c.updated) <= 30; }).length + "<small>件</small>", "good", "報連相が適切に完了") + '</div>';
+    function card(key, name, cs){
+      var o = cs.filter(function(c){ return c.open; }), cr = o.filter(function(c){ return c.status === "要確認"; }).sort(sortCases);
+      return '<button type="button" class="pcard" data-go="' + esc(key) + '"><span class="nm">' + esc(name) + '</span><span class="cnt">' +
+        '<span class="pill crit">🔴 ' + cr.length + '</span><span class="pill warn">🟡 ' + o.filter(function(c){ return c.status === "フォロー"; }).length + '</span>' +
+        '<span class="pill flat">止まっている ' + o.filter(function(c){ return (c.days || 0) >= 2; }).length + '</span></span>' +
+        '<span class="top">' + (cr.length ? cr.slice(0, 2).map(function(c){ return "・" + esc(c.title); }).join("<br>") : '<span class="note">要確認の案件はありません</span>') + '</span></button>';
+    }
+    h += panel("担当役員ごと", "", '<div class="grid-cards">' + persons.map(function(p){
+      var ids = spacesOf("人", p).map(function(l){ return l["スペースID（自動）"]; });
+      return card("p:" + p, p, cases.filter(function(c){ return ids.indexOf(c.spaceId) >= 0; }));
+    }).join("") + '</div>');
+    if (clientIds.length) h += panel("クライアントごと", "", '<div class="grid-cards">' + clientIds.map(function(cid){
+      var sids = spacesOf("クライアント", cid).map(function(l){ return l["スペースID（自動）"]; });
+      return card("c:" + cid, clientName[cid], cases.filter(function(c){ return c.client === cid || sids.indexOf(c.spaceId) >= 0; }));
+    }).join("") + '</div>');
+    h += panel("🔴 要確認の案件（全体）", "長く止まっている順", crit.length ? '<div class="cases">' + crit.slice(0, 10).map(function(c){ return caseCard(c, true); }).join("") + '</div>' : '<p class="empty">要確認の案件はありません。</p>');
+    if (!cases.length) h += '<div class="empty-big"><b>まだ案件がありません</b>毎朝の分析が動くと、紐づけたスペースの会話が案件としてまとまり、ここに表示されます。</div>';
+    return h;
+  }
+
+  function render(){
+    var t = S.tab, html;
+    if (t.indexOf("c:") === 0){ S.client = t.slice(2); t = S.tab = "client"; }
+    if (t.indexOf("p:") === 0 && persons.indexOf(t.slice(2)) >= 0) html = personView(t.slice(2));
+    else if (t === "client") html = clientView();
+    else { S.tab = "home"; html = homeView(); }
+    $("view").innerHTML = html;
+    document.querySelectorAll("[data-nav]").forEach(function(a){
+      var on = a.getAttribute("data-nav") === S.tab;
+      if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    });
+    fit();
+  }
+  function go(tab){
+    S.tab = tab; S.filter = "open"; render();
+    try { var u = new URL(window.parent.location.href); u.searchParams.set("tab", S.tab === "client" ? "c:" + S.client : S.tab); window.parent.history.replaceState(null, "", u.toString()); window.parent.scrollTo(0, 0); } catch (e) {}
+  }
+  window.__localNav = function(t){ if (t === "survey") return false; go(t); return true; };
+
+  document.addEventListener("click", function(e){
+    var f = e.target.closest("[data-filter]"); if (f){ S.filter = f.getAttribute("data-filter"); render(); return; }
+    var c = e.target.closest("[data-client]"); if (c){ S.client = c.getAttribute("data-client"); go("client"); return; }
+    var g = e.target.closest("[data-go]"); if (g){ go(g.getAttribute("data-go")); }
+  });
+
+  // 高さを中身に合わせる（Streamlit の枠の中で二重のスクロールを出さない）
+  function fit(){ try { if (window.frameElement) window.frameElement.style.height = Math.ceil(document.body.getBoundingClientRect().height + 8) + "px"; } catch (e) {} }
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.body);
+  document.addEventListener("toggle", fit, true);
+  render();
+})();
+</script>
+__NAV_JS__
+</body></html>

@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>報連相チェック集計</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+/* Layout: 紺のヘッダー → 期間の選択 → 数字 → 平均・分布 → 推移 → 部署・声かけ → 個人別 → 個人の記録 → 自由記述 */
+:root{
+  --bg:#f4f6f9; --surface:#ffffff; --ink:#14202e; --ink-2:#465264; --muted:#768194;
+  --line:#e1e6ed; --line-2:#c9d1dc; --accent:#1f395f; --accent-ink:#ffffff; --accent-soft:#e7edf6;
+  --bar:#1f395f; --bar-ink:#ffffff; --bar-2:#c4d0e2;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --l1:#c43b3b; --l2:#ef9f9a; --l3:#d9d8d3; --l4:#86b6ef; --l5:#2a78d6;
+  --l1-ink:#ffffff; --l2-ink:#14202e; --l3-ink:#14202e; --l4-ink:#14202e; --l5-ink:#ffffff;
+  --seq:#1c5cab;
+  --good:#0a7d0a; --good-bg:#e6f4e6; --warn:#8a5a00; --warn-bg:#fdf1d6; --crit:#b42f2f; --crit-bg:#fbe6e6; --info:#1f5fa8; --info-bg:#e5effa;
+  --font:"IBM Plex Sans JP",system-ui,-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.6}
+a{color:var(--info)}
+h1,h2,h3{margin:0;text-wrap:balance}
+h2{font-size:15px;font-weight:600}
+h3{font-size:13px;font-weight:600}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* ヘッダー */
+.appbar{background:var(--bar);color:var(--bar-ink)}
+.appbar-in{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:12px 0;display:grid;gap:8px}
+.brand{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between}
+.brand h1{font-size:17px;font-weight:600;letter-spacing:.02em}
+.brand .meta{font-size:12px;color:var(--bar-2);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.brand button{background:transparent;color:var(--bar-ink);border-color:var(--bar-2);min-height:28px;padding:2px 10px;font-size:12px}
+.brand button:hover{background:rgba(255,255,255,.08)}
+.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.tabs a{color:var(--bar-2);text-decoration:none;padding:8px 14px 10px;border-bottom:3px solid transparent;white-space:nowrap;font-weight:500;display:flex;gap:6px;align-items:center}
+.tabs a:hover{color:var(--bar-ink)}
+.tabs a[aria-current="page"]{color:var(--bar-ink);border-bottom-color:var(--bar-ink)}
+.tabs .cnt{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.14);border-radius:999px;padding:0 7px}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:20px 48px;display:grid;gap:20px}
+.wrap>.tabpanel{display:grid;gap:20px;min-width:0}
+/* 共通部品 */
+select,button{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:5px 10px;min-height:34px}
+button{cursor:pointer}
+button:hover{background:var(--accent-soft)}
+button:focus-visible,select:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.note{font-size:12px;color:var(--muted)}
+.banner{border:1px solid var(--line-2);background:var(--surface);border-radius:8px;padding:12px 14px;display:grid;gap:6px}
+.banner.warn{border-color:var(--warn);background:var(--warn-bg)}
+.banner.crit{border-color:var(--crit);background:var(--crit-bg)}
+.banner p{margin:0}
+.banner .acts{display:flex;gap:8px;flex-wrap:wrap}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
+.panel-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.toolbar label{font-size:12px;color:var(--muted)}
+.grid-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:4px;align-content:start}
+.kpi .lab{font-size:12px;color:var(--ink-2);letter-spacing:.04em}
+.kpi .val{font-size:28px;font-weight:600;line-height:1.2}
+.kpi .val small{font-size:14px;font-weight:400;color:var(--muted);margin-left:4px}
+.kpi .meta{font-size:12px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:999px;white-space:nowrap;font-weight:500}
+.pill.good{background:var(--good-bg);color:var(--good)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.crit{background:var(--crit-bg);color:var(--crit)}
+.pill.info{background:var(--info-bg);color:var(--info)}
+.pill.flat{background:var(--line);color:var(--ink-2)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:20px}
+.up{color:var(--good)} .down{color:var(--crit)} .flat{color:var(--muted)}
+.empty{color:var(--muted);font-size:13px;padding:8px 0;margin:0}
+.skeleton{height:12px;border-radius:4px;background:var(--line);margin:8px 0}
+.seg-btn{display:inline-flex;border:1px solid var(--line-2);border-radius:6px;overflow:hidden}
+.seg-btn button{border:0;border-radius:0;min-height:30px;padding:4px 12px;font-size:12px}
+.seg-btn button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+/* リスト */
+.items{display:grid}
+.item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;padding:10px 0;border-top:1px solid var(--line);align-items:start}
+.item:first-child{border-top:0}
+.item .body{min-width:0;overflow-wrap:anywhere}
+.item .sub{font-size:12px;color:var(--muted)}
+.item .side{text-align:right;font-size:12px;color:var(--muted);white-space:nowrap}
+/* 表 */
+.tscroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:500;color:var(--ink-2);font-size:12px;white-space:nowrap}
+td.n,th.n{text-align:right}
+td.nm{white-space:nowrap}
+td.wrap{min-width:240px;overflow-wrap:anywhere}
+td.heat{text-align:center;font-family:var(--mono);font-variant-numeric:tabular-nums;border-bottom:2px solid var(--surface)}
+.big table{min-width:760px}
+.low{color:var(--crit);font-weight:600}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--accent-soft)}
+tr.sel td{background:var(--accent-soft)}
+/* レポート */
+.reports{display:grid;gap:12px}
+details.rep{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+details.rep>summary{list-style:none;cursor:pointer;padding:12px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center}
+details.rep>summary::-webkit-details-marker{display:none}
+details.rep>summary .t{font-weight:600}
+details.rep>summary .s{font-size:12px;color:var(--muted);display:flex;gap:6px 12px;flex-wrap:wrap}
+details.rep[open]>summary{border-bottom:1px solid var(--line)}
+.rep-body{padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px 24px}
+.rep-sec h3{margin-bottom:4px;display:flex;gap:6px;align-items:center}
+.rep-sec ul{margin:0;padding-left:1.1em;display:grid;gap:3px}
+.rep-sec li{overflow-wrap:anywhere}
+.rep-sec.risk h3{color:var(--crit)}
+/* アンケート */
+.avg{display:grid;gap:14px}
+.avg-row{display:grid;grid-template-columns:52px minmax(0,1fr) 96px;gap:10px;align-items:center}
+.avg-name{display:flex;align-items:center;gap:6px;font-weight:500}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.track{position:relative;height:22px}
+.track .tick{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.track .bar{position:absolute;left:0;top:5px;height:12px;border-radius:0 4px 4px 0}
+.axis{position:relative;height:16px;font-size:11px;color:var(--muted)}
+.axis span{position:absolute;transform:translateX(-50%)}
+.avg-val{text-align:right;font-size:15px}
+.avg-val .d{display:block;font-size:11px}
+.dist{display:grid;gap:12px}
+.dist-row{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center}
+.stack{display:flex;height:26px;gap:2px}
+.seg{display:flex;align-items:center;justify-content:center;font-size:12px;min-width:0;overflow:hidden}
+.seg:first-child{border-radius:4px 0 0 4px}.seg:last-child{border-radius:0 4px 4px 0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-2)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.chart{position:relative;overflow-x:auto}
+.chart svg{display:block}
+.chart text{font-family:var(--font);font-size:11px;fill:var(--muted)}
+details.tbl{margin-top:10px}
+details.tbl summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.follow{display:grid;gap:10px}
+.fcard{border:1px solid var(--line);border-left:3px solid var(--crit);border-radius:0;padding:10px 12px;display:grid;gap:4px}
+.fcard .who{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.fcard .why{font-size:12px;color:var(--crit)}
+.fcard .c{font-size:13px;color:var(--ink-2);white-space:pre-wrap}
+.voices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:20px}
+.vlist{display:grid;gap:10px}
+.voice{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:4px;min-width:0}
+.voice .by{font-size:12px;color:var(--muted)}
+.voice .t{white-space:pre-wrap;overflow-wrap:anywhere}
+.privacy{font-size:12px;color:var(--ink-2);display:flex;gap:8px;align-items:center}
+.privacy svg{flex:none}
+#tip{position:fixed;z-index:10;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12px;line-height:1.5;padding:6px 9px;border-radius:6px;max-width:260px;opacity:0;transition:opacity .12s}
+@media (prefers-reduced-motion:reduce){#tip{transition:none}}
+@media (max-width:560px){.avg-row{grid-template-columns:44px minmax(0,1fr) 76px}.dist-row{grid-template-columns:44px minmax(0,1fr)}.kpi .val{font-size:24px}.appbar-in,.wrap{padding-inline:16px}}
+html,body{margin:0}
+.brand a.btn{color:var(--bar-ink);border:1px solid var(--bar-2);border-radius:6px;padding:2px 10px;font-size:12px;text-decoration:none;min-height:28px;display:inline-flex;align-items:center}
+.brand a.btn:hover{background:rgba(255,255,255,.08)}
+
+</style></head><body>
+__APPBAR__
+<main class="wrap">
+  <section id="tab-survey" class="tabpanel">
+    <div class="panel" style="display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:space-between">
+      <div class="toolbar">
+        <span class="note">集計単位</span>
+        <div class="seg-btn" role="group" aria-label="集計単位">
+          <button type="button" id="unit-week" aria-pressed="true">週ごと</button>
+          <button type="button" id="unit-month" aria-pressed="false">月ごと</button>
+        </div>
+        <label for="period" id="period-label">配信週（金曜）</label>
+        <select id="period"><option>読み込み中…</option></select>
+      </div>
+      <div class="privacy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>委員会内での分析用。本人への共有や評価には使用しません。</div>
+    </div>
+
+    <div class="grid-kpi" id="sv-kpis">
+      <div class="kpi"><div class="lab">回答者数</div><div class="val">–</div><div class="skeleton"></div></div>
+      <div class="kpi"><div class="lab">回答率</div><div class="val">–</div><div class="skeleton"></div></div>
+      <div class="kpi"><div class="lab">合計平均（15点満点）</div><div class="val">–</div><div class="skeleton"></div></div>
+      <div class="kpi"><div class="lab">いちばん弱い項目</div><div class="val">–</div><div class="skeleton"></div></div>
+    </div>
+
+    <div class="two">
+      <section class="panel" aria-labelledby="h-avg">
+        <div class="panel-head"><h2 id="h-avg">項目別の平均</h2><span class="note" id="avg-note">5点満点</span></div>
+        <div id="sv-avg" class="avg"><div class="skeleton"></div></div>
+      </section>
+      <section class="panel" aria-labelledby="h-dist">
+        <div class="panel-head"><h2 id="h-dist">点数の分布</h2><span class="note" id="dist-note">人数</span></div>
+        <div id="sv-dist" class="dist"><div class="skeleton"></div></div>
+        <div class="legend" id="sv-dist-legend" style="margin-top:12px"></div>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="h-trend">
+      <div class="panel-head"><h2 id="h-trend">推移</h2><span class="note" id="trend-note"></span></div>
+      <div class="legend" id="sv-trend-legend" style="margin-bottom:8px"></div>
+      <div class="chart" id="sv-trend"><div class="skeleton"></div></div>
+      <div class="chart" id="sv-rate"></div>
+      <details class="tbl"><summary>表で見る</summary><div class="tscroll" id="sv-trend-table"></div></details>
+    </section>
+
+    <div class="two">
+      <section class="panel" aria-labelledby="h-dept">
+        <div class="panel-head"><h2 id="h-dept">部署別の平均</h2>
+          <div class="seg-btn" role="group" aria-label="部署別の集計期間">
+            <button type="button" id="dept-sel" aria-pressed="true">選択した期間</button>
+            <button type="button" id="dept-all" aria-pressed="false">全期間</button>
+          </div>
+        </div>
+        <div class="tscroll" id="sv-dept"><div class="skeleton"></div></div>
+        <p class="note" id="dept-note" style="margin:8px 0 0"></p>
+      </section>
+      <section class="panel" aria-labelledby="h-follow">
+        <div class="panel-head"><h2 id="h-follow">声をかけたい人</h2><span class="note">2点以下の項目／合計9点以下／前の期間から3点以上低下</span></div>
+        <div id="sv-follow" class="follow"><div class="skeleton"></div></div>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="h-people">
+      <div class="panel-head"><h2 id="h-people">個人別</h2><span class="note" id="people-note">合計の低い順。行を押すと、その人の記録を下に表示します</span></div>
+      <div class="tscroll" id="sv-people"><div class="skeleton"></div></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-person">
+      <div class="panel-head"><h2 id="h-person">個人の記録</h2>
+        <div class="toolbar"><label for="person">氏名</label><select id="person"></select></div>
+      </div>
+      <div id="sv-person"><div class="skeleton"></div></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-voice">
+      <div class="panel-head"><h2 id="h-voice">自由記述</h2><span class="note" id="voice-note"></span></div>
+      <div id="sv-voices" class="voices"><div class="skeleton"></div></div>
+    </section>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+(function(){
+  "use strict";
+  // ===== データ（Streamlit が読み込んで埋め込む） =====
+  var VALUES = __VALUES__;
+  var SETTINGS = __SETTINGS__;
+
+  var ITEMS = [
+    { key: "r", name: "報告", mark: "【報告】", color: "var(--s1)" },
+    { key: "c", name: "連絡", mark: "【連絡】", color: "var(--s2)" },
+    { key: "s", name: "相談", mark: "【相談】", color: "var(--s3)" }
+  ];
+  var LEVELS = {5:"10割できた",4:"9割できた",3:"8〜9割できた",2:"5〜8割できた",1:"5割未満"};
+  var S = { tab: "survey", sv: { rows: [], cols: null, unit: "week", periods: [], period: null, deptScope: "sel", target: null, goal: null, person: null } };
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
+  function fmt(n, d){ return (n == null || isNaN(n)) ? "–" : n.toFixed(d == null ? 2 : d); }
+  function mean(a){ return a.length ? a.reduce(function(x,y){return x+y;},0) / a.length : null; }
+  function pad(n){ return (n < 10 ? "0" : "") + n; }
+  function ymd(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
+  function md(key){ var p = key.split("-"); return p.length === 2 ? (+p[0]) + "年" + (+p[1]) + "月" : (+p[1]) + "/" + (+p[2]); }
+  function today(){ return ymd(new Date()); }
+  function uniq(a){ return Array.from(new Set(a)).filter(function(x){ return x !== "" && x != null; }); }
+  function fillSelect(el, opts, allLabel, keep){
+    var v = keep != null ? keep : el.value;
+    el.innerHTML = (allLabel ? '<option value="">' + allLabel + '</option>' : "") + opts.map(function(o){ var val = o.value != null ? o.value : o, lab = o.label != null ? o.label : o; return '<option value="' + esc(val) + '">' + esc(lab) + '</option>'; }).join("");
+    if (v && Array.prototype.some.call(el.options, function(o){ return o.value === v; })) el.value = v;
+  }
+
+
+  // ===== アンケート：解析 =====
+  function parseStamp(s){ var m = String(s).match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/); return m ? new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0), +(m[6]||0)) : null; }
+  function fridayOf(d){ var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - (x.getDay() - 5 + 7) % 7); return ymd(x); }
+  function score(v){ var m = String(v || "").match(/^\s*([1-5])/); return m ? +m[1] : null; }
+  function shortHeader(h){ return String(h).replace(/^\s*\d+\.\s*/, "").replace(/\s*[（(][^）)]*[）)]\s*$/, "").trim(); }
+  function parseSurvey(values){
+    var sv = S.sv;
+    if (!values || !values.length){ sv.rows = []; return; }
+    var head = values[0].map(String), cols = { name: -1, dept: -1, free: [] };
+    head.forEach(function(h, i){
+      if (/氏名|名前/.test(h) && cols.name < 0) cols.name = i;
+      else if (/部署|所属/.test(h) && cols.dept < 0) cols.dept = i;
+      ITEMS.forEach(function(it){ if (h.indexOf(it.mark) >= 0) cols[it.key] = i; });
+    });
+    var lastScore = Math.max.apply(null, ITEMS.map(function(it){ return cols[it.key]; }).filter(function(i){ return i != null; }).concat([0]));
+    head.forEach(function(h, i){ if (i > lastScore && h.trim()) cols.free.push({ idx: i, label: shortHeader(h) }); });
+    sv.cols = cols;
+    var byKey = {};
+    values.slice(1).forEach(function(r){
+      var d = parseStamp(r[0]); if (!d) return;
+      var rec = { at: d, week: fridayOf(d), name: String(r[cols.name] || "").trim() || "（氏名なし）", dept: String(r[cols.dept] || "").trim() || "未記入", free: {} };
+      rec.month = rec.week.slice(0, 7); rec.key = rec.name.replace(/\s+/g, "");
+      ITEMS.forEach(function(it){ rec[it.key] = cols[it.key] != null ? score(r[cols[it.key]]) : null; });
+      if (ITEMS.some(function(it){ return rec[it.key] == null; })) return;
+      rec.total = rec.r + rec.c + rec.s;
+      cols.free.forEach(function(f){ var t = String(r[f.idx] || "").trim(); if (t) rec.free[f.idx] = t; });
+      var k = rec.week + "|" + rec.key;
+      if (!byKey[k] || byKey[k].at < rec.at) byKey[k] = rec;          // 同じ週の再回答は最新を採用
+    });
+    sv.rows = Object.keys(byKey).map(function(k){ return byKey[k]; });
+  }
+  function parseSettings(values){
+    var t = null, g = null;
+    (values || []).forEach(function(r){
+      var lab = String(r[0] || "");
+      if (/対象人数/.test(lab)) { var n = parseFloat(String(r[1]).replace(/[^\d.]/g, "")); if (n > 0) t = n; }
+      if (/回答率の目標/.test(lab)) { var s = String(r[1] || ""), v = parseFloat(s.replace(/[^\d.]/g, "")); if (!isNaN(v)) g = /%/.test(s) || v > 1 ? v / 100 : v; }
+    });
+    S.sv.target = t; S.sv.goal = g;
+  }
+
+  // ===== アンケート：集計 =====
+  function pkey(r){ return S.sv.unit === "week" ? r.week : r.month; }
+  function rowsIn(p){ return S.sv.rows.filter(function(r){ return pkey(r) === p; }); }
+  function weeksIn(p){ return uniq(S.sv.rows.filter(function(r){ return pkey(r) === p; }).map(function(r){ return r.week; })); }
+  function prevPeriod(p){ var i = S.sv.periods.indexOf(p); return i >= 0 && i + 1 < S.sv.periods.length ? S.sv.periods[i + 1] : null; }
+  function stats(rows){ var o = { n: rows.length, people: uniq(rows.map(function(r){ return r.key; })).length }; ITEMS.forEach(function(it){ o[it.key] = mean(rows.map(function(r){ return r[it.key]; })); }); o.total = mean(rows.map(function(r){ return r.total; })); return o; }
+  function rateOf(p){                                        // 週＝回答者/対象、月＝その月の各週の回答率の平均
+    var t = S.sv.target; if (!t) return null;
+    return mean(weeksIn(p).map(function(w){ return S.sv.rows.filter(function(r){ return r.week === w; }).length / t; }));
+  }
+  function perPerson(rows){
+    var g = {};
+    rows.forEach(function(r){ (g[r.key] = g[r.key] || []).push(r); });
+    return Object.keys(g).map(function(k){
+      var a = g[k].slice().sort(function(x, y){ return x.at - y.at; }), s = stats(a), last = a[a.length - 1];
+      return { key: k, name: last.name, dept: last.dept, r: s.r, c: s.c, s: s.s, total: s.total, n: a.length, rows: a };
+    });
+  }
+  function latestSurvey(){
+    if (!S.sv.rows.length) return null;
+    var w = uniq(S.sv.rows.map(function(r){ return r.week; })).sort().reverse()[0], n = S.sv.rows.filter(function(r){ return r.week === w; }).length;
+    return { week: w, n: n, rate: S.sv.target ? n / S.sv.target : null };
+  }
+
+  // ===== アンケート：描画 =====
+  function isWeek(){ return S.sv.unit === "week"; }
+  function plab(p){ return isWeek() ? md(p) + "週" : md(p); }
+  function d2(v){ return isWeek() ? 0 : 1; }
+  function delta(cur, prev, d, unit){
+    var word = isWeek() ? "前週比" : "前月比";
+    if (cur == null || prev == null) return '<span class="flat">' + (isWeek() ? "前週" : "前月") + 'データなし</span>';
+    var v = cur - prev, z = Math.abs(v) < 0.005;
+    return '<span class="' + (z ? "flat" : v > 0 ? "up" : "down") + '">' + word + ' ' + (z ? "±0" : (v > 0 ? "▲" : "▼") + fmt(Math.abs(v), d)) + (unit || "") + '</span>';
+  }
+  function fillPeriods(){
+    var sv = S.sv, keep = sv.period;
+    sv.periods = uniq(sv.rows.map(pkey)).sort().reverse();
+    if (sv.periods.indexOf(keep) < 0) sv.period = sv.periods[0] || null;
+    $("period-label").textContent = isWeek() ? "配信週（金曜）" : "月";
+    $("period").innerHTML = sv.periods.length ? sv.periods.map(function(p, i){
+      var lab = isWeek() ? p.replace(/-/g, "/") + "（金）" : md(p) + "（配信 " + weeksIn(p).length + "回）";
+      return '<option value="' + p + '"' + (p === sv.period ? " selected" : "") + '>' + lab + (i === 0 ? " 最新" : "") + '</option>';
+    }).join("") : "<option>回答なし</option>";
+  }
+  function renderSurvey(){
+        fillPeriods();
+    if (!S.sv.period){ ["sv-avg","sv-dist","sv-trend","sv-dept","sv-follow","sv-people","sv-person","sv-voices"].forEach(function(id){ $(id).innerHTML = '<p class="empty">回答がまだありません。フォームに回答が入ると、ここに集計が表示されます。</p>'; }); return; }
+    svKpis(); svAvg(); svDist(); svTrend(); svDept(); svFollow(); svPeople(); svPerson(); svVoices();
+  }
+  function svKpis(){
+    var p = S.sv.period, st = stats(rowsIn(p)), pp = prevPeriod(p), ps = pp ? stats(rowsIn(pp)) : null;
+    var rate = rateOf(p), prate = pp ? rateOf(pp) : null, goal = S.sv.goal, t = S.sv.target;
+    var weakest = ITEMS.slice().sort(function(a, b){ return st[a.key] - st[b.key]; })[0], allMax = ITEMS.every(function(it){ return st[it.key] === 5; });
+    var k = function(l, v, m){ return '<div class="kpi"><div class="lab">' + l + '</div><div class="val num">' + v + '</div><div class="meta">' + (m || "") + '</div></div>'; };
+    var pill = (rate != null && goal != null) ? (rate >= goal ? '<span class="pill good">✓ 目標' + Math.round(goal * 100) + '%達成</span>' : '<span class="pill warn">! 目標' + Math.round(goal * 100) + '%に未達</span>') : "";
+    $("sv-kpis").innerHTML =
+      k(isWeek() ? "回答者数" : "回答した人（実人数）", st.people + "<small>人" + (t ? " / 対象 " + t + "人" : "") + "</small>", isWeek() ? (ps ? delta(st.people, ps.people, 0, "人") : "") : "延べ " + st.n + "件・配信 " + weeksIn(p).length + "回") +
+      k(isWeek() ? "回答率" : "回答率（各週の平均）", rate != null ? Math.round(rate * 100) + "<small>%</small>" : "–", rate != null ? pill + (prate != null ? " " + delta(rate * 100, prate * 100, 0, "pt") : "") : '<span class="flat">「分析」タブの対象人数が未設定です</span>') +
+      k("合計平均（15点満点）", fmt(st.total), delta(st.total, ps && ps.total)) +
+      k("いちばん弱い項目", allMax ? "なし" : weakest.name + "<small>" + fmt(st[weakest.key]) + "点</small>", allMax ? "全項目が満点です" : "次の施策・掲示板発信のテーマ候補");
+  }
+  function svAvg(){
+    var p = S.sv.period, st = stats(rowsIn(p)), pp = prevPeriod(p), ps = pp ? stats(rowsIn(pp)) : null, pct = function(v){ return v / 5 * 100; };
+    $("avg-note").textContent = "5点満点・" + (isWeek() ? "前週比" : "前月比");
+    var ticks = [0,1,2,3,4,5].map(function(t){ return '<i class="tick" style="left:' + pct(t) + '%"></i>'; }).join("");
+    $("sv-avg").innerHTML = ITEMS.map(function(it){
+      var v = st[it.key];
+      return '<div class="avg-row"><div class="avg-name"><span class="dot" style="background:' + it.color + '"></span>' + it.name + '</div><div class="track">' + ticks + '<div class="bar" style="width:' + (v ? pct(v) : 0) + '%;background:' + it.color + '" data-tip="' + plab(p) + '　' + it.name + ' 平均 ' + fmt(v) + '点（' + st.n + '件）"></div></div><div class="avg-val num">' + fmt(v) + '<span class="d">' + delta(v, ps && ps[it.key]) + '</span></div></div>';
+    }).join("") + '<div class="avg-row"><span></span><div class="axis">' + [0,1,2,3,4,5].map(function(t){ return '<span style="left:' + pct(t) + '%">' + t + '</span>'; }).join("") + '</div><span></span></div>';
+  }
+  function svDist(){
+    var rows = rowsIn(S.sv.period);
+    $("dist-note").textContent = isWeek() ? "人数" : "延べ件数（各週の回答の合計）";
+    $("sv-dist").innerHTML = ITEMS.map(function(it){
+      var cnt = [0,0,0,0,0,0]; rows.forEach(function(r){ cnt[r[it.key]]++; });
+      var segs = [1,2,3,4,5].filter(function(l){ return cnt[l]; }).map(function(l){ var w = cnt[l] / rows.length * 100; return '<div class="seg num" style="flex:' + cnt[l] + ' 1 0;background:var(--l' + l + ');color:var(--l' + l + '-ink)" data-tip="' + it.name + '：' + l + '点（' + LEVELS[l] + '）' + cnt[l] + (isWeek() ? "人" : "件") + '・' + Math.round(w) + '%">' + (w >= 7 ? cnt[l] : "") + '</div>'; }).join("");
+      return '<div class="dist-row"><div class="avg-name"><span class="dot" style="background:' + it.color + '"></span>' + it.name + '</div><div class="stack">' + segs + '</div></div>';
+    }).join("");
+    $("sv-dist-legend").innerHTML = [1,2,3,4,5].map(function(l){ return '<span><i style="background:var(--l' + l + ')"></i>' + l + '点 ' + LEVELS[l] + '</span>'; }).join("");
+  }
+  // 折れ線（1つの軸だけ。回答率は別の図にする）
+  function lineChart(el, labels, series, o){
+    var n = labels.length, W = Math.max(el.clientWidth || 600, 300), H = o.height || 220, L = 46, R = o.right || 84, T = o.top || 12, B = 26;
+    var x = function(i){ return n === 1 ? L + (W - L - R) / 2 : L + i * (W - L - R) / (n - 1); };
+    var y = function(v){ return T + (o.max - v) / (o.max - o.min) * (H - T - B); };
+    var s = '<svg width="' + W + '" height="' + H + '" role="img" aria-label="' + esc(o.aria) + '">' + (o.title ? '<text x="' + L + '" y="11" style="fill:var(--ink-2)">' + o.title + '</text>' : "");
+    o.ticks.forEach(function(t){ s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(t) + '" y2="' + y(t) + '" stroke="var(--line)"/><text x="' + (L - 8) + '" y="' + (y(t) + 4) + '" text-anchor="end">' + o.tickFmt(t) + '</text>'; });
+    if (o.ref != null) s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(o.ref) + '" y2="' + y(o.ref) + '" stroke="var(--muted)" stroke-dasharray="4 4"/><text x="' + (W - R + 6) + '" y="' + (y(o.ref) + 4) + '">' + o.refLabel + '</text>';
+    var step = Math.max(1, Math.ceil(n / Math.max(1, Math.floor((W - L - R) / 64))));
+    if (o.xLabels !== false) labels.forEach(function(l, i){ if (i % step === 0 || i === n - 1) s += '<text x="' + x(i) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(o.xFmt(l)) + '</text>'; });
+    var ends = [];
+    series.forEach(function(se){
+      var pts = []; se.values.forEach(function(v, i){ if (v != null) pts.push([x(i), y(v), v, i]); });
+      if (pts.length > 1) s += '<polyline points="' + pts.map(function(p){ return p[0] + "," + p[1]; }).join(" ") + '" fill="none" stroke="' + se.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+      pts.forEach(function(p, j){ s += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="' + (j === pts.length - 1 ? 5 : 3.5) + '" fill="' + se.color + '" stroke="var(--surface)" stroke-width="2" data-tip="' + esc(o.xFmt(labels[p[3]])) + '　' + esc(se.name) + ' ' + o.valFmt(p[2]) + (se.tip ? se.tip(p[3]) : "") + '"/>'; });
+      if (pts.length && o.endLabels) ends.push({ name: se.name, v: pts[pts.length - 1][2], x: pts[pts.length - 1][0], y: pts[pts.length - 1][1] });
+    });
+    ends.sort(function(a, b){ return a.y - b.y; });
+    var lastY = -99; ends.forEach(function(e){ var yy = Math.max(e.y + 4, lastY + 13); lastY = yy; s += '<text x="' + (e.x + 10) + '" y="' + yy + '" style="fill:var(--ink-2)">' + esc(e.name) + ' ' + o.valFmt(e.v, true) + '</text>'; });
+    el.innerHTML = s + "</svg>";
+  }
+  function svTrend(){
+    var ps = S.sv.periods.slice().reverse(), data = ps.map(function(p){ var s = stats(rowsIn(p)); s.p = p; s.rate = rateOf(p); return s; });
+    $("trend-note").textContent = ps.length < 2 ? "2" + (isWeek() ? "週" : "か月") + "分以上たまると線で推移が見られます" : (isWeek() ? "週ごと" : "月ごと") + "の平均（5点満点）と回答率";
+    $("sv-trend-legend").innerHTML = ITEMS.map(function(it){ return '<span><i style="background:' + it.color + ';border-radius:50%"></i>' + it.name + '</span>'; }).join("");
+    var xf = function(p){ return isWeek() ? md(p) : (+p.slice(5)) + "月"; };
+    lineChart($("sv-trend"), ps, ITEMS.map(function(it){ return { name: it.name, color: it.color, values: data.map(function(d){ return d[it.key]; }), tip: function(i){ return "点（" + data[i].n + "件）"; } }; }),
+      { min: 1, max: 5, ticks: [1,2,3,4,5], tickFmt: String, xFmt: xf, valFmt: function(v, short){ return fmt(v, short ? 1 : 2); }, endLabels: true, aria: "報告・連絡・相談の平均点の推移" });
+    if (S.sv.target) lineChart($("sv-rate"), ps, [{ name: "回答率", color: "var(--accent)", values: data.map(function(d){ return d.rate; }) }],
+      { min: 0, max: 1, height: 110, top: 22, ticks: [0, .5, 1], tickFmt: function(t){ return t * 100 + "%"; }, xFmt: xf, valFmt: function(v){ return Math.round(v * 100) + "%"; }, ref: S.sv.goal, refLabel: S.sv.goal != null ? "目標" + Math.round(S.sv.goal * 100) + "%" : "", title: "回答率", aria: "回答率の推移" });
+    else $("sv-rate").innerHTML = "";
+    $("sv-trend-table").innerHTML = '<table style="min-width:520px"><thead><tr><th>' + (isWeek() ? "配信週" : "月") + '</th><th class="n">回答者</th><th class="n">回答率</th><th class="n">報告</th><th class="n">連絡</th><th class="n">相談</th><th class="n">合計</th></tr></thead><tbody>' +
+      data.slice().reverse().map(function(d){ return '<tr><td class="nm">' + (isWeek() ? d.p : md(d.p)) + '</td><td class="n num">' + d.people + '</td><td class="n num">' + (d.rate != null ? Math.round(d.rate * 100) + "%" : "–") + '</td><td class="n num">' + fmt(d.r) + '</td><td class="n num">' + fmt(d.c) + '</td><td class="n num">' + fmt(d.s) + '</td><td class="n num">' + fmt(d.total) + '</td></tr>'; }).join("") + '</tbody></table>';
+  }
+  function heat(v){ if (v == null) return '<td class="heat">–</td>'; var p = Math.round(8 + (v - 1) / 4 * 72); return '<td class="heat" style="background:color-mix(in oklab, var(--seq) ' + p + '%, var(--surface));color:' + (p > 50 ? "var(--surface)" : "var(--ink)") + '">' + fmt(v) + '</td>'; }
+  function svDept(){
+    var rows = S.sv.deptScope === "all" ? S.sv.rows : rowsIn(S.sv.period), g = {};
+    rows.forEach(function(r){ (g[r.dept] = g[r.dept] || []).push(r); });
+    var list = Object.keys(g).map(function(k){ var s = stats(g[k]); s.dept = k; return s; }).sort(function(a, b){ return a.total - b.total; });
+    $("sv-dept").innerHTML = '<table style="min-width:440px"><thead><tr><th>部署</th><th class="n">人数</th><th class="n">報告</th><th class="n">連絡</th><th class="n">相談</th><th class="n">合計</th></tr></thead><tbody>' +
+      list.map(function(d){ return '<tr><td class="nm">' + esc(d.dept) + '</td><td class="n num">' + d.people + '</td>' + heat(d.r) + heat(d.c) + heat(d.s) + '<td class="n num">' + fmt(d.total, 1) + '</td></tr>'; }).join("") + '</tbody></table>';
+    var small = list.filter(function(d){ return d.people < 3; }).length;
+    $("dept-note").textContent = "合計の低い順。色が濃いほど高い点数です。" + (small ? "回答者が3人未満の部署は個人の点数に近いため、扱いに注意してください。" : "");
+  }
+  function svFollow(){
+    var pp = prevPeriod(S.sv.period), prev = {};
+    if (pp) perPerson(rowsIn(pp)).forEach(function(x){ prev[x.key] = x; });
+    var firstFree = S.sv.cols && S.sv.cols.free[0];
+    var list = perPerson(rowsIn(S.sv.period)).map(function(x){
+      var why = [];
+      ITEMS.forEach(function(it){ if (x[it.key] <= 2) why.push(it.name + " " + fmt(x[it.key], d2()) + "点"); });
+      if (x.total <= 9) why.push("合計 " + fmt(x.total, d2()) + "点");
+      if (prev[x.key] && prev[x.key].total - x.total >= 3) why.push((isWeek() ? "前週" : "前月") + "から −" + fmt(prev[x.key].total - x.total, d2()) + "点");
+      return { x: x, why: why };
+    }).filter(function(o){ return o.why.length; }).sort(function(a, b){ return a.x.total - b.x.total; });
+    $("sv-follow").innerHTML = list.length ? list.map(function(o){
+      var x = o.x, c = firstFree ? x.rows.map(function(r){ return r.free[firstFree.idx]; }).filter(Boolean).pop() : "";
+      return '<div class="fcard"><div class="who"><b>' + esc(x.name) + '</b><span class="note">' + esc(x.dept) + '</span><span class="num note">報告' + fmt(x.r, d2()) + '・連絡' + fmt(x.c, d2()) + '・相談' + fmt(x.s, d2()) + '（計' + fmt(x.total, d2()) + '）</span></div><div class="why">' + esc(o.why.join("／")) + '</div>' + (c ? '<div class="c">' + esc(c) + '</div>' : "") + '</div>';
+    }).join("") : '<p class="empty">この期間に該当する人はいません。</p>';
+  }
+  function svPeople(){
+    var pp = prevPeriod(S.sv.period), prev = {};
+    if (pp) perPerson(rowsIn(pp)).forEach(function(x){ prev[x.key] = x; });
+    var list = perPerson(rowsIn(S.sv.period)).sort(function(a, b){ return a.total - b.total || a.name.localeCompare(b.name, "ja"); });
+    if (!S.sv.person || !S.sv.rows.some(function(r){ return r.key === S.sv.person; })) S.sv.person = list.length ? list[0].key : null;
+    var dd = d2(), cell = function(v){ return '<td class="n num' + (v <= 2 ? " low" : "") + '">' + fmt(v, dd) + '</td>'; };
+    $("people-note").textContent = (isWeek() ? "" : "月内の平均。") + "合計の低い順。行を押すと、その人の記録を下に表示します";
+    $("sv-people").innerHTML = '<table style="min-width:640px"><thead><tr><th>氏名</th><th>部署</th><th class="n">報告</th><th class="n">連絡</th><th class="n">相談</th><th class="n">合計</th><th class="n">' + (isWeek() ? "前週比" : "前月比") + '</th><th class="n">' + (isWeek() ? "累計回答" : "この月の回答") + '</th></tr></thead><tbody>' +
+      list.map(function(x){
+        var p = prev[x.key], d = p ? x.total - p.total : null, times = isWeek() ? S.sv.rows.filter(function(r){ return r.key === x.key; }).length : x.n;
+        return '<tr class="click' + (x.key === S.sv.person ? " sel" : "") + '" data-person="' + esc(x.key) + '" tabindex="0"><td class="nm">' + esc(x.name) + '</td><td class="nm">' + esc(x.dept) + '</td>' + cell(x.r) + cell(x.c) + cell(x.s) + '<td class="n num">' + fmt(x.total, dd) + '</td><td class="n num ' + (d == null || Math.abs(d) < 0.05 ? "flat" : d > 0 ? "up" : "down") + '">' + (d == null ? "–" : Math.abs(d) < 0.05 ? "±0" : (d > 0 ? "+" : "−") + fmt(Math.abs(d), dd)) + '</td><td class="n num">' + times + '回</td></tr>';
+      }).join("") + '</tbody></table>';
+  }
+  function svPerson(){
+    var all = perPerson(S.sv.rows).sort(function(a, b){ return a.name.localeCompare(b.name, "ja"); });
+    fillSelect($("person"), all.map(function(x){ return { value: x.key, label: x.name + "（" + x.dept + "）" }; }), null, S.sv.person || "");
+    var x = all.filter(function(o){ return o.key === S.sv.person; })[0];
+    if (!x){ $("sv-person").innerHTML = '<p class="empty">氏名を選ぶと、その人の週ごとの点数とコメントを表示します。</p>'; return; }
+    var rows = x.rows, weeks = rows.map(function(r){ return r.week; }), free = (S.sv.cols && S.sv.cols.free) || [];
+    var first = rows[0], last = rows[rows.length - 1];
+    var head = '<div class="toolbar" style="margin-bottom:10px"><span class="note">回答 ' + rows.length + '回（' + md(first.week) + '週〜' + md(last.week) + '週）</span><span class="note">合計 初回 ' + first.total + ' → 最新 ' + last.total + '</span>' + (rows.length > 1 ? (last.total > first.total ? '<span class="pill good">▲ ' + (last.total - first.total) + '点</span>' : last.total < first.total ? '<span class="pill crit">▼ ' + (first.total - last.total) + '点</span>' : '<span class="pill flat">変化なし</span>') : "") + '</div>';
+    $("sv-person").innerHTML = head + '<div class="legend" style="margin-bottom:6px">' + ITEMS.map(function(it){ return '<span><i style="background:' + it.color + ';border-radius:50%"></i>' + it.name + '</span>'; }).join("") + '</div><div class="chart" id="person-chart"></div><div class="tscroll" style="margin-top:10px"><table style="min-width:620px"><thead><tr><th>配信週</th><th class="n">報告</th><th class="n">連絡</th><th class="n">相談</th><th class="n">合計</th><th>コメント</th></tr></thead><tbody>' +
+      rows.slice().reverse().map(function(r){ var c = free.map(function(f){ return r.free[f.idx] ? '<div><span class="note">' + esc(f.label) + '</span><div style="white-space:pre-wrap">' + esc(r.free[f.idx]) + '</div></div>' : ""; }).join(""); return '<tr><td class="nm num">' + r.week + '</td>' + ITEMS.map(function(it){ return '<td class="n num' + (r[it.key] <= 2 ? " low" : "") + '">' + r[it.key] + '</td>'; }).join("") + '<td class="n num">' + r.total + '</td><td class="wrap" style="white-space:pre-wrap">' + (c || '<span class="note">–</span>') + '</td></tr>'; }).join("") + '</tbody></table></div>';
+    lineChart($("person-chart"), weeks, ITEMS.map(function(it){ return { name: it.name, color: it.color, values: rows.map(function(r){ return r[it.key]; }) }; }),
+      { min: 1, max: 5, height: 180, ticks: [1,2,3,4,5], tickFmt: String, xFmt: md, valFmt: function(v){ return v + "点"; }, endLabels: true, aria: x.name + "さんの週ごとの点数" });
+  }
+  function svVoices(){
+    var rows = rowsIn(S.sv.period).slice().sort(function(a, b){ return b.at - a.at; }), cols = (S.sv.cols && S.sv.cols.free) || [], total = 0;
+    $("sv-voices").innerHTML = cols.length ? cols.map(function(f){
+      var items = rows.filter(function(r){ return r.free[f.idx]; }); total += items.length;
+      return '<div><h3 style="margin-bottom:8px">' + esc(f.label) + ' <span class="note num">' + items.length + '件</span></h3><div class="vlist">' + (items.length ? items.map(function(r){ return '<div class="voice"><div class="by">' + esc(r.name) + '・' + esc(r.dept) + (isWeek() ? "" : '・' + md(r.week) + '週') + '</div><div class="t">' + esc(r.free[f.idx]) + '</div></div>'; }).join("") : '<p class="empty">記入はありません。</p>') + '</div></div>';
+    }).join("") : '<p class="empty">自由記述の設問が見つかりません。</p>';
+    $("voice-note").textContent = plab(S.sv.period) + "の記入 " + total + "件";
+  }
+
+
+  // ===== 高さを中身に合わせる（Streamlit の枠の中で、二重のスクロールを出さない） =====
+  function fit(){ try { if (window.frameElement) window.frameElement.style.height = Math.ceil(document.body.getBoundingClientRect().height + 8) + "px"; } catch (e) {} }
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.body);
+
+  // ===== 操作 =====
+  $("period").addEventListener("change", function(e){ S.sv.period = e.target.value; renderSurvey(); });
+  function setUnit(u){
+    if (S.sv.unit === u) return;
+    var cur = S.sv.period; S.sv.unit = u;
+    if (cur) S.sv.period = u === "month" ? cur.slice(0, 7) : (uniq(S.sv.rows.filter(function(r){ return r.month === cur; }).map(function(r){ return r.week; })).sort().reverse()[0] || null);
+    $("unit-week").setAttribute("aria-pressed", String(u === "week")); $("unit-month").setAttribute("aria-pressed", String(u === "month"));
+    renderSurvey();
+  }
+  $("unit-week").addEventListener("click", function(){ setUnit("week"); });
+  $("unit-month").addEventListener("click", function(){ setUnit("month"); });
+  $("dept-sel").addEventListener("click", function(){ S.sv.deptScope = "sel"; this.setAttribute("aria-pressed", "true"); $("dept-all").setAttribute("aria-pressed", "false"); svDept(); });
+  $("dept-all").addEventListener("click", function(){ S.sv.deptScope = "all"; this.setAttribute("aria-pressed", "true"); $("dept-sel").setAttribute("aria-pressed", "false"); svDept(); });
+  $("person").addEventListener("change", function(e){ S.sv.person = e.target.value; svPeople(); svPerson(); });
+  function pickPerson(tr){ S.sv.person = tr.getAttribute("data-person"); svPeople(); svPerson(); $("h-person").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); }
+  $("sv-people").addEventListener("click", function(e){ var tr = e.target.closest("tr[data-person]"); if (tr) pickPerson(tr); });
+  $("sv-people").addEventListener("keydown", function(e){ if (e.key === "Enter" || e.key === " "){ var tr = e.target.closest("tr[data-person]"); if (tr){ e.preventDefault(); pickPerson(tr); } } });
+  var rt; window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(function(){ if (S.sv.period){ svTrend(); svPerson(); } }, 150); });
+  var tip = $("tip");
+  document.addEventListener("pointermove", function(e){
+    var t = e.target.closest && e.target.closest("[data-tip]");
+    if (!t){ tip.style.opacity = 0; return; }
+    tip.textContent = t.getAttribute("data-tip");
+    var x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8), y = e.clientY + 16;
+    tip.style.left = x + "px"; tip.style.top = y + "px"; tip.style.opacity = 1;
+  });
+
+  // ===== 起動 =====
+  parseSettings(SETTINGS);
+  parseSurvey(VALUES);
+  renderSurvey();
+  fit();
+})();
+</script>
+__NAV_JS__
+</body></html>
