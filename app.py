@@ -90,7 +90,7 @@ NAV_JS = """<script>
   function goParent(tab, reload){
     var u = parentUrl(); if (!u) { location.reload(); return; }
     var base = u.pathname.replace(/\\/(survey|settings)\\/?$/, "/");
-    if (tab === "survey" || tab === "settings") { u.pathname = base.replace(/\\/$/, "") + "/" + tab; u.search = ""; }
+    if (tab === "survey") { u.pathname = base.replace(/\\/$/, "") + "/survey"; u.search = ""; }
     else if (tab) { u.pathname = base; u.search = "?tab=" + encodeURIComponent(tab); }
     if (reload) u.searchParams.set("reload", "1");
     topNav(u.toString());
@@ -137,6 +137,9 @@ def admin_page():
         show_error(e)
         st.stop()
     tab = st.query_params.get("tab", "home")
+    if tab == "settings":            # 配信設定（URL は /?tab=settings。Streamlit Cloud の非公開アプリでは /settings のような下の階層が開けないことがあるため）
+        settings_page()
+        return
     page = (HERE / "admin.html").read_text(encoding="utf-8")
     page = (page.replace("/*__BASE_CSS__*/", base_css())
                 .replace("__APPBAR__", appbar(nav_items(pages), tab if not tab.startswith("c:") else "client"))
@@ -291,6 +294,5 @@ if st.query_params.get("reload"):
 pg = st.navigation([
     st.Page(admin_page, title="報連相AI 管理画面", url_path="", default=True),
     st.Page(survey_page, title="報連相チェック集計", url_path="survey"),
-    st.Page(settings_page, title="配信設定", url_path="settings"),
 ], position="hidden")
 pg.run()
