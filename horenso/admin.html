@@ -51,7 +51,10 @@ details.hist summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
 .pcard .top{font-size:12px;color:var(--ink-2);display:grid;gap:2px}
 .empty-big{background:var(--surface);border:1px dashed var(--line-2);border-radius:10px;padding:28px 20px;text-align:center;color:var(--ink-2)}
 .empty-big b{display:block;font-size:15px;color:var(--ink);margin-bottom:4px}
-td.tw{min-width:200px;overflow-wrap:anywhere}
+td.tw{min-width:180px;overflow-wrap:anywhere}
+td.who{white-space:normal;min-width:64px;max-width:150px;overflow-wrap:anywhere}
+td.due{white-space:nowrap;width:1%}
+.two{align-items:start}
 table.mx td,table.mx th{text-align:center}
 table.mx td:first-child,table.mx th:first-child{text-align:left}
 </style></head><body>
@@ -129,7 +132,7 @@ __APPBAR__
     if (c.decided.length) body += '<div class="box"><div class="lab">決まったこと</div><ul>' + c.decided.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>';
     if (c.unresolved.length) body += '<div class="box"><div class="lab">未解決のこと</div><ul>' + c.unresolved.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + '</ul></div>';
     var extra = "";
-    if (c.open && c.nextWho) extra += '<div class="next"><b>次に動く人：' + esc(c.nextWho) + '</b>　' + esc(c.nextWhat) + '　<span class="' + (c.overdue ? "overdue" : "") + '">期限 ' + esc(c.due || "未定") + (c.overdue ? "（期限切れ）" : "") + '</span></div>';
+    if (c.open && c.nextWho) extra += '<div class="next"><b>次に動く人：' + esc(c.nextWho) + '</b>　' + esc(c.nextWhat) + '　<span class="' + (c.overdue ? "overdue" : "") + '">期限 ' + esc(md(c.due) || "未定") + (c.overdue ? "（期限切れ）" : "") + '</span></div>';
     if (c.open && c.stalledAt) extra += '<div class="stall"><b>止まっている所：</b>' + esc(c.stalledAt) + (c.days != null ? '　<b>' + c.days + '営業日</b>（' + esc(md(c.stalledSince)) + '〜）' : "") + '</div>';
     var why = c.status === "Good" && c.goodReason ? "Goodの理由：" + c.goodReason : (c.reason ? "判定の理由：" + c.reason : "");
     return '<article class="case s-' + c.status + '">' +
@@ -176,7 +179,7 @@ __APPBAR__
         return '<div class="li"><div><div class="t">' + esc(c.stalledAt) + '</div><div class="s">' + esc(c.title) + '・' + spaceLabel(c) + '</div></div><div class="r"><div class="days">' + (c.days != null ? c.days : "–") + '<small>営業日</small></div>' + esc(md(c.stalledSince)) + '〜</div></div>';
       }).join("") + '</div>' : '<p class="empty">止まっている案件はありません。</p>') +
       panel("誰が次に動くか", "期限切れ・期限の近い順", whoRows.length ? '<div class="tscroll"><table style="min-width:420px"><thead><tr><th>担当</th><th>やること</th><th>期限</th></tr></thead><tbody>' + whoRows.slice(0, 12).map(function(c){
-        return '<tr><td class="nm"><b>' + esc(c.nextWho) + '</b></td><td class="tw">' + esc(c.nextWhat) + '<div class="note">' + esc(c.title) + '</div></td><td class="nm' + (c.overdue ? " overdue" : "") + '">' + esc(c.due || "未定") + (c.overdue ? "<br>期限切れ" : "") + '</td></tr>';
+        return '<tr><td class="who"><b>' + esc(c.nextWho) + '</b></td><td class="tw">' + esc(c.nextWhat) + '<div class="note">' + esc(c.title) + '</div></td><td class="due' + (c.overdue ? " overdue" : "") + '">' + esc(md(c.due) || "未定") + (c.overdue ? "<br>期限切れ" : "") + '</td></tr>';
       }).join("") + '</tbody></table></div>' : '<p class="empty">次に動く人が決まっている案件はありません。</p>') + '</div>';
     // 決まったこと・最近の動き
     var decided = []; cs.filter(function(c){ return daysAgo(c.updated) <= 14; }).forEach(function(c){ c.decided.forEach(function(d){ decided.push({ c: c, d: d }); }); });
@@ -274,7 +277,7 @@ __APPBAR__
     S.tab = tab; S.filter = "open"; render();
     try { var u = new URL(window.parent.location.href); u.searchParams.set("tab", S.tab === "client" ? "c:" + S.client : S.tab); window.parent.history.replaceState(null, "", u.toString()); window.parent.scrollTo(0, 0); } catch (e) {}
   }
-  window.__localNav = function(t){ if (t === "survey") return false; go(t); return true; };
+  window.__localNav = function(t){ if (t === "survey" || t === "settings") return false; go(t); return true; };
 
   document.addEventListener("click", function(e){
     var f = e.target.closest("[data-filter]"); if (f){ S.filter = f.getAttribute("data-filter"); render(); return; }
