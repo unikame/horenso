@@ -103,11 +103,17 @@ NAV_JS = """<script>
       goParent(t, false);
     });
   });
-  document.querySelectorAll("[data-ext]").forEach(function(a){   // 別のアプリへ（画面全体を切り替える）
-    a.addEventListener("click", function(e){
-      e.preventDefault();
-      topNav(a.href);
-    });
+  // 別のアプリへ移動する。Streamlit Cloud ではアプリ自体が枠の中で動いているため、いちばん外側の画面ごと切り替える。
+  // 外側に触れない場合は、新しいタブで開く
+  function openExternal(url){
+    try {
+      var d = window.top.document, a = d.createElement("a");
+      a.href = url; a.target = "_top"; a.rel = "noopener"; a.style.display = "none";
+      d.body.appendChild(a); a.click(); a.remove();
+    } catch (e) { window.open(url, "_blank", "noopener"); }
+  }
+  document.querySelectorAll("[data-ext]").forEach(function(a){
+    a.addEventListener("click", function(e){ e.preventDefault(); openExternal(a.href); });
   });
   document.querySelectorAll("[data-reload]").forEach(function(a){
     a.addEventListener("click", function(e){ e.preventDefault(); goParent(null, true); });
