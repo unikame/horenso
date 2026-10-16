@@ -21,7 +21,7 @@ import streamlit as st
 
 from . import config
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]   # 書けるかどうかは共有の権限で決まる（管理台帳・アンケートは閲覧者、配信設定だけ編集者）
 JST = dt.timezone(dt.timedelta(hours=9))
 LOADED: dict = {}          # (シートID, タブ) → 実際に Google から読み込んだ時刻
 
@@ -153,15 +153,46 @@ def _forbidden_message(e: Exception, sheet_id: str, share: str) -> str:
         return ("Google Sheets API が有効になっていません。Google Cloud コンソールの「API とサービス」→「ライブラリ」で "
                 "Google Sheets API を開き、「有効にする」を押してください" + (f"（プロジェクト番号 {m.group(1)}）" if m else "") +
                 "。有効にしてから数分後に「最新を読み込む」を押してください。")
-    name = "報連相AIレポート 管理台帳" if sheet_id == config.get("LEDGER_ID") else "報連相チェック回答管理表"
+    name = {config.get("LEDGER_ID"): "報連相AIレポート 管理台帳", config.get("DELIVERY_ID"): "報連相AI 配信設定"}.get(sheet_id, "報連相チェック回答管理表")
     return (f"「{name}」を読む権限がありません。スプレッドシートの「共有」で、" + (share or "サービスアカウントのメールアドレスを閲覧者として共有してください。")
             + " 共有後、「最新を読み込む」を押してください。")
 
 
+def sheet_id_of(kind: str) -> str:
+    if kind in config.LEDGER_KINDS:
+        return config.get("LEDGER_ID")
+    if kind in config.DELIVERY_KINDS:
+        return config.get("DELIVERY_ID")
+    return config.get("SURVEY_ID")
+
+
 def load(kind: str) -> list[list[str]]:
-    """kind は config.TABS のキー（cases / caselog / links / pages / clients / survey / settings）"""
-    sheet = config.get("LEDGER_ID") if kind in config.LEDGER_KINDS else config.get("SURVEY_ID")
-    return load_values(sheet, config.TABS[kind])
+    """kind は config.TABS のキー（cases / caselog / links / pages / clients / linegroups / delivery / survey / settings）"""
+    return load_values(sheet_id_of(kind), config.TABS[kind])
+
+
+def save_row(kind: str, row_number: int, updates: dict) -> None:
+    """見出し名 → 値 の updates を、その行（1始まり。見出しが1行目）に書き込む。書いたら読み込み直す。"""
+    try:
+        gc, email = _client()
+        ws = gc.open_by_key(sheet_id_of(kind)).worksheet(config.TABS[kind])
+        head = [str(h).strip() for h in ws.row_values(1)]
+        cells = []
+        for h, v in updates.items():
+            if h not in head:
+                raise SheetError("「" + config.TABS[kind] + "」タブに「" + h + "」の列が見つかりません。")
+            cells.append(gspread.Cell(row_number, head.index(h) + 1, v))
+        ws.update_cells(cells, value_input_option="RAW")
+    except SheetError:
+        raise
+    except PermissionError as e:
+        raise SheetError("「報連相AI 配信設定」に書き込む権限がありません。サービスアカウントを「編集者」で共有してください。") from e
+    except gspread.exceptions.APIError as e:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+        if code == 403:
+            raise SheetError("「報連相AI 配信設定」に書き込む権限がありません。サービスアカウントを「編集者」で共有してください。") from e
+        raise SheetError("保存できませんでした（" + str(code) + "）。少し待ってからもう一度お試しください。") from e
+    load_values.clear()
 
 
 def loaded_at():
