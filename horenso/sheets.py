@@ -195,6 +195,28 @@ def save_row(kind: str, row_number: int, updates: dict) -> None:
     load_values.clear()
 
 
+def append_row(kind: str, values: dict) -> None:
+    """見出し名 → 値 の values を、いちばん下に1行足す。書いたら読み込み直す。"""
+    try:
+        gc, email = _client()
+        ws = gc.open_by_key(sheet_id_of(kind)).worksheet(config.TABS[kind])
+        head = [str(h).strip() for h in ws.row_values(1)]
+        missing = [h for h in values if h not in head]
+        if missing:
+            raise SheetError("「" + config.TABS[kind] + "」タブに「" + "」「".join(missing) + "」の列が見つかりません。")
+        ws.append_row([values.get(h, "") for h in head], value_input_option="RAW", table_range="A1")
+    except SheetError:
+        raise
+    except PermissionError as e:
+        raise SheetError("「報連相AI 配信設定」に書き込む権限がありません。サービスアカウントを「編集者」で共有してください。") from e
+    except gspread.exceptions.APIError as e:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+        if code == 403:
+            raise SheetError("「報連相AI 配信設定」に書き込む権限がありません。サービスアカウントを「編集者」で共有してください。") from e
+        raise SheetError("保存できませんでした（" + str(code) + "）。少し待ってからもう一度お試しください。") from e
+    load_values.clear()
+
+
 def loaded_at():
     """いちばん古い読み込み時刻（表示中のデータがいつ時点か）。まだなければ None。"""
     return min(LOADED.values()) if LOADED else None
