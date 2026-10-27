@@ -185,7 +185,7 @@ def survey_page():
     components.html(page, height=900, scrolling=False)
 
 
-# ---------------- 配信設定（役員ごとに、毎朝の個別配信で受け取るスペースを選ぶ） ----------------
+# ---------------- 配信設定（ログインした人が、参加しているスペースのうち、毎朝の個別配信で受け取るスペースを選ぶ） ----------------
 DELIVERY_COLS = {"spaces": "受け取るスペース（スペースID・読点区切り）", "mode": "届け方", "on": "配信",
                  "dm": "DMスペース（自動）", "added": "アプリ追加日（自動）"}
 
@@ -231,6 +231,21 @@ def space_choices() -> list[dict]:
     return sorted(out, key=lambda x: order.get(x["group"], 9))
 
 
+ALL_SPACES_COL = "すべてのスペースを選べる"      # 「する」の人は、参加していないスペースも選べる（管理者がシートで設定）
+
+
+def my_member_spaces(me: str):
+    """ログインした人が参加しているスペース {スペースID: {name, kind}}。メンバーの一覧がまだなければ None。"""
+    vals = load_or_none("members")
+    if not vals or len(vals) < 2:
+        return None
+    out = {}
+    for r in table(vals):
+        if str(r.get("メール", "")).strip().lower() == me and r.get("スペースID"):
+            out[r["スペースID"].strip()] = {"name": r.get("スペース名", ""), "kind": r.get("種類", "")}
+    return out
+
+
 def settings_page():
     try:
         rows = table(sheets.load("delivery"))
@@ -242,55 +257,80 @@ def settings_page():
     st.html(SETTINGS_CSS)
     with st.container(key="settings"):
         st.markdown("## 配信設定")
-        st.html('<p class="hs-lead">毎朝、チャットアプリ「報連相AI」から1対1のメッセージで届く要約の受け取り方を選びます。</p>')
-        if not rows:
-            st.info("「報連相AI 配信設定」に役員の行がありません。")
-            return
+        st.html('<p class="hs-lead">参加しているスペースの要約を、毎朝チャットアプリ「報連相AI」から個人チャットで受け取れます。'
+                '受け取るスペースを選んで保存してください。</p>')
         me = ME or viewer_email()
-        mine =[i for i, r in enumerate(rows) if r.get("メール", "").strip().lower() == me] if me else []
         names = [r.get("役員名") or r.get("メール") or f"{i + 2}行目" for i, r in enumerate(rows)]
+        mine = [i for i, r in enumerate(rows) if r.get("メール", "").strip().lower() == me] if me else []
         if mine:
             idx = mine[0]
-            st.caption(f"{names[idx]}（{me}）の設定")
-        else:
+        elif auth.enabled():                # ログインした人の行がまだない → 保存したときに行を足す
+            idx = None
+        elif rows:                           # ログインなしで動かしているとき（手元での確認用）だけ、だれの設定かを選ぶ
             idx = st.selectbox("どなたの設定ですか", range(len(rows)), format_func=lambda i: names[i])
-        row = rows[idx]
+            me = rows[idx].get("メール", "").strip().lower()
+        else:
+            st.info("ログインすると、ご自身の設定ができます。")
+            return
+        row = rows[idx] if idx is not None else {}
+        display_name = names[idx] if idx is not None else (str(st.user.get("name") or "").strip() if auth.enabled() else "") or me.split("@")[0]
+        st.caption(f"{display_name}（{me}）の設定")
         if row.get(DELIVERY_COLS["dm"]):
             st.html(f'<p class="hs-ok">● 「報連相AI」は追加済みです（{_html.escape(row.get(DELIVERY_COLS["added"], ""))}）</p>')
         else:
             st.html('<p class="hs-ng">● まだ「報連相AI」が追加されていません。Google Chat の「＋ チャットを新規作成」→「アプリを検索」で'
                     '「報連相AI」を探して追加すると、翌朝から届きます。</p>')
 
+        # 選べるのは、参加しているスペースだけ（「すべてのスペースを選べる」の人は全部）
+        all_ok = row.get(ALL_SPACES_COL, "") == "する"
         choices = space_choices()
-        chosen = {s for s in str(row.get(DELIVERY_COLS["spaces"], "")).replace(",", "、").replace("，", "、").split("、") if s.strip()}
-        with st.form(f"delivery_{idx}"):
+        member = my_member_spaces(me)
+        if not all_ok:
+            if member is None:
+                st.warning("参加しているスペースの一覧がまだできていません。明日の朝に自動で作られます。", icon=":material/schedule:")
+                choices = []
+            else:
+                known = {c["id"] for c in choices}
+                choices = [c for c in choices if c["id"] in member] + [
+                    {"id": sid, "name": v["name"] or sid, "group": "LINE グループ" if v["kind"] == "LINE" else "社内のチャット"}
+                    for sid, v in member.items() if sid not in known]
+                order = {"社内のチャット": 0, "クライアントのチャット": 1, "LINE グループ": 2}
+                choices.sort(key=lambda x: order.get(x["group"], 9))
+        chosen = {s.strip() for s in str(row.get(DELIVERY_COLS["spaces"], "")).replace(",", "、").replace("，", "、").split("、") if s.strip()}
+        key = f"delivery_{idx if idx is not None else 'new'}"
+        with st.form(key):
             on = st.toggle("毎朝の配信を受け取る", value=row.get(DELIVERY_COLS["on"], "する") != "しない")
-            mode = st.radio("届け方", ["まとめて1通", "スペースごと"], horizontal=True,
-                            index=1 if row.get(DELIVERY_COLS["mode"]) == "スペースごと" else 0,
-                            help="まとめて1通：選んだスペースの要確認・フォローを1通に。スペースごと：各スペースの要約をそのまま1通ずつ。")
-            st.markdown("**受け取るスペース**")
+            mode = st.radio("届け方", ["スペースごと", "まとめて1通"], horizontal=True,
+                            index=1 if row.get(DELIVERY_COLS["mode"]) == "まとめて1通" else 0,
+                            help="スペースごと：各スペースの要約をそのまま1通ずつ。まとめて1通：選んだスペースの要確認・フォローを1通に。")
+            st.markdown(f"**参加しているスペース（{len(choices)}件）** … 要約を受け取るスペースをオンにしてください" if not all_ok
+                        else f"**すべてのスペース（{len(choices)}件）** … 要約を受け取るスペースをオンにしてください")
             picked = []
             group = None
             for s in choices:
                 if s["group"] != group:
                     group = s["group"]
                     st.caption(group)
-                if st.checkbox(s["name"], value=s["id"] in chosen, key=f"sp_{idx}_{s['id']}"):
+                if st.toggle(s["name"], value=s["id"] in chosen, key=f"sp_{idx}_{s['id']}"):
                     picked.append(s["id"])
-            unknown = sorted(chosen - {s["id"] for s in choices})     # 一覧にない（なくなった）スペースは残す
+            unknown = sorted(chosen - {s["id"] for s in choices}) if all_ok else []   # 一覧にないスペースは、すべて選べる人だけ残す
             if unknown:
                 st.caption("一覧にないスペース（そのまま残します）：" + "、".join(unknown))
             submitted = st.form_submit_button("保存する", type="primary")
         if submitted:
             now = sheets.dt.datetime.now(sheets.JST)
+            values = {
+                DELIVERY_COLS["spaces"]: "、".join(picked + unknown),
+                DELIVERY_COLS["mode"]: mode,
+                DELIVERY_COLS["on"]: "する" if on else "しない",
+                "最終更新": f"{now:%Y-%m-%d %H:%M}",
+                "更新者": me or "管理画面",
+            }
             try:
-                sheets.save_row("delivery", idx + 2, {
-                    DELIVERY_COLS["spaces"]: "、".join(picked + unknown),
-                    DELIVERY_COLS["mode"]: mode,
-                    DELIVERY_COLS["on"]: "する" if on else "しない",
-                    "最終更新": f"{now:%Y-%m-%d %H:%M}",
-                    "更新者": me or "管理画面",
-                })
+                if idx is None:
+                    sheets.append_row("delivery", dict(values, **{"役員名": display_name, "メール": me}))
+                else:
+                    sheets.save_row("delivery", idx + 2, values)
             except sheets.SheetError as e:
                 show_error(e)
             else:
