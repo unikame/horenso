@@ -234,6 +234,46 @@ def space_choices() -> list[dict]:
 ALL_SPACES_COL = "すべてのスペースを選べる"      # 「する」の人は、参加していないスペースも選べる（管理者がシートで設定）
 
 
+class NeedRelogin(Exception):
+    """スペースの一覧を読む許可がない・切れている（ログインし直すと直る）。"""
+
+
+@st.cache_data(ttl=600, show_spinner="参加しているスペースを読み込んでいます…")
+def _chat_spaces(email: str, token: str) -> list[dict]:
+    import requests
+    out, page = [], ""
+    while True:
+        params = {"pageSize": 1000, "filter": 'spaceType = "SPACE"'}
+        if page:
+            params["pageToken"] = page
+        r = requests.get("https://chat.googleapis.com/v1/spaces", params=params,
+                         headers={"Authorization": "Bearer " + token}, timeout=20)
+        if r.status_code in (401, 403):
+            raise NeedRelogin(r.text[:200])
+        r.raise_for_status()
+        js = r.json()
+        out += [{"id": x["name"], "name": x.get("displayName") or x["name"]} for x in js.get("spaces", []) if x.get("name")]
+        page = js.get("nextPageToken") or ""
+        if not page:
+            return out
+
+
+def my_chat_spaces(me: str):
+    """ログインした人が参加している Google Chat のスペース（その人の許可で、その場で読む）。読めなければ None。"""
+    try:
+        token = st.user.tokens["access"]
+    except Exception:
+        return None
+    if not token:
+        return None
+    try:
+        return _chat_spaces(me, token)
+    except NeedRelogin:
+        return None
+    except Exception:
+        return None
+
+
 def my_member_spaces(me: str):
     """ログインした人が参加しているスペース {スペースID: {name, kind}}。メンバーの一覧がまだなければ None。"""
     vals = load_or_none("members")
@@ -285,16 +325,31 @@ def settings_page():
         all_ok = row.get(ALL_SPACES_COL, "") == "する"
         choices = space_choices()
         member = my_member_spaces(me)
-        if not all_ok:
+        live = my_chat_spaces(me) if auth.enabled() else None
+        if live is not None:
+            # Google Chat：本人が参加しているスペースすべて（その場で読む）。LINE：要約の投稿先のスペースのメンバーなら選べる
+            target = {c["id"]: c for c in choices}
+            spaces = [dict(target.get(x["id"], {}), id=x["id"], name=x["name"],
+                           group=target[x["id"]]["group"] if x["id"] in target else "そのほかのスペース") for x in live]
+            lines = [c for c in choices if c["group"] == "LINE グループ" and (all_ok or (member or {}).get(c["id"]))]
+            extra = [c for c in choices if all_ok and c["group"] != "LINE グループ" and c["id"] not in {x["id"] for x in live}]
+            order = {"社内のチャット": 0, "クライアントのチャット": 1, "そのほかのスペース": 2, "LINE グループ": 3}
+            choices = sorted(spaces + extra + lines, key=lambda x: (order.get(x["group"], 9), x["name"]))
+        elif auth.enabled() and member is not None and not all_ok:
+            st.info("参加しているすべてのスペースを出すには、いったんログアウトして、もう一度ログインしてください（スペースの一覧を読む許可をいただきます）。"
+                    "今は報連相AIの対象のスペースだけを出しています。", icon=":material/info:")
+            st.button("ログインし直す", icon=":material/login:", on_click=st.logout)
+        if live is None and not all_ok:
             if member is None:
                 st.warning("参加しているスペースの一覧がまだできていません。明日の朝に自動で作られます。", icon=":material/schedule:")
                 choices = []
             else:
                 known = {c["id"] for c in choices}
                 choices = [c for c in choices if c["id"] in member] + [
-                    {"id": sid, "name": v["name"] or sid, "group": "LINE グループ" if v["kind"] == "LINE" else "社内のチャット"}
+                    {"id": sid, "name": v["name"] or sid,
+                     "group": {"LINE": "LINE グループ", "社員が選んだスペース": "そのほかのスペース"}.get(v["kind"], "社内のチャット")}
                     for sid, v in member.items() if sid not in known]
-                order = {"社内のチャット": 0, "クライアントのチャット": 1, "LINE グループ": 2}
+                order = {"社内のチャット": 0, "クライアントのチャット": 1, "そのほかのスペース": 2, "LINE グループ": 3}
                 choices.sort(key=lambda x: order.get(x["group"], 9))
         chosen = {s.strip() for s in str(row.get(DELIVERY_COLS["spaces"], "")).replace(",", "、").replace("，", "、").split("、") if s.strip()}
         key = f"delivery_{idx if idx is not None else 'new'}"
@@ -310,7 +365,7 @@ def settings_page():
             for s in choices:
                 if s["group"] != group:
                     group = s["group"]
-                    st.caption(group)
+                    st.caption(group + ("（オンにすると、翌朝から要約を作ります）" if group == "そのほかのスペース" else ""))
                 if st.toggle(s["name"], value=s["id"] in chosen, key=f"sp_{idx}_{s['id']}"):
                     picked.append(s["id"])
             unknown = sorted(chosen - {s["id"] for s in choices}) if all_ok else []   # 一覧にないスペースは、すべて選べる人だけ残す
