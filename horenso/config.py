@@ -29,12 +29,13 @@ TABS = {
     "linegroups": "LINEグループ",
     # 配信設定
     "delivery": "配信設定",
+    "members": "スペースのメンバー",      # Apps Script が毎朝書く（スペースごとの社内のメンバー）
     # アンケート回答管理表
     "survey": "フォームの回答 1",
     "settings": "分析",
 }
 LEDGER_KINDS = {"cases", "caselog", "links", "pages", "clients", "linegroups"}
-DELIVERY_KINDS = {"delivery"}
+DELIVERY_KINDS = {"delivery", "members"}
 
 
 def get(key: str) -> str:
