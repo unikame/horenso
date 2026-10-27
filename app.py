@@ -16,9 +16,10 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from horenso import config, sheets
+from horenso import auth, config, sheets
 
 HERE = Path(__file__).parent / "horenso"
+ME = ""          # ログインしている人のメールアドレス（login_gate で決まる）
 
 st.set_page_config(page_title="報連相AI 管理画面", page_icon=":material/space_dashboard:", layout="wide", initial_sidebar_state="collapsed")
 
@@ -69,9 +70,11 @@ def appbar(items, active: str) -> str:
             return f'<a href="{_html.escape(config.get("SURVEY_APP_URL"))}" data-ext>{_html.escape(label)}</a>'
         return f'<a href="#" data-nav="{_html.escape(k)}"{" aria-current=\"page\"" if k == active else ""}>{_html.escape(label)}</a>'
     tabs = "".join(tab(k, label) for k, label in items)
+    who = (f'<span class="who" title="ログイン中">{_html.escape(ME)}</span><a class="btn" href="#" data-logout>ログアウト</a>'
+           if ME and auth.enabled() else "")
     return (f'<header class="appbar"><div class="appbar-in"><div class="brand"><h1>報連相AI 管理画面</h1>'
             f'<div class="meta"><span>{stamp}</span><a class="btn" href="#" data-reload>最新を読み込む</a>'
-            f'<a class="btn" href="https://docs.google.com/spreadsheets/d/{config.get("LEDGER_ID")}/edit" target="_blank" rel="noopener">管理台帳</a></div></div>'
+            f'<a class="btn" href="https://docs.google.com/spreadsheets/d/{config.get("LEDGER_ID")}/edit" target="_blank" rel="noopener">管理台帳</a>{who}</div></div>'
             f'<nav class="tabs" aria-label="画面の切り替え">{tabs}</nav></div></header>')
 
 
@@ -117,6 +120,14 @@ NAV_JS = """<script>
   });
   document.querySelectorAll("[data-reload]").forEach(function(a){
     a.addEventListener("click", function(e){ e.preventDefault(); goParent(null, true); });
+  });
+  document.querySelectorAll("[data-logout]").forEach(function(a){
+    a.addEventListener("click", function(e){
+      e.preventDefault();
+      var u = parentUrl(); if (!u) { location.reload(); return; }
+      u.pathname = u.pathname.replace(/\\/(survey|settings)\\/?$/, "/"); u.search = "?logout=1";
+      topNav(u.toString());
+    });
   });
 })();
 </script>"""
@@ -188,7 +199,7 @@ SETTINGS_CSS = """<style>
 
 
 def viewer_email() -> str:
-    """Streamlit Community Cloud にログインして見ている人のメールアドレス（分からなければ空）。"""
+    """ログインして見ている人のメールアドレス（Google でのログイン、または Streamlit Community Cloud。分からなければ空）。"""
     try:
         return str(st.user.get("email") or "").strip().lower()
     except Exception:
@@ -235,8 +246,8 @@ def settings_page():
         if not rows:
             st.info("「報連相AI 配信設定」に役員の行がありません。")
             return
-        me = viewer_email()
-        mine = [i for i, r in enumerate(rows) if r.get("メール", "").strip().lower() == me] if me else []
+        me = ME or viewer_email()
+        mine =[i for i, r in enumerate(rows) if r.get("メール", "").strip().lower() == me] if me else []
         names = [r.get("役員名") or r.get("メール") or f"{i + 2}行目" for i, r in enumerate(rows)]
         if mine:
             idx = mine[0]
@@ -291,6 +302,48 @@ def base_page_shell(appbar_html: str) -> str:
     return ('<!doctype html><html lang="ja"><head><meta charset="utf-8"><style>' + base_css() +
             'body{margin:0;background:transparent}</style></head><body>' + appbar_html + NAV_JS + '</body></html>')
 
+
+# ---------------- ログイン（Google アカウント） ----------------
+LOGIN_CSS = """<style>
+[data-testid="stMainBlockContainer"] { padding: 0 16px !important; }
+.st-key-login { max-width: 420px; margin: 14vh auto 0; padding: 32px 28px 28px; background: #fff;
+  border: 1px solid #e3e7ee; border-radius: 14px; box-shadow: 0 1px 2px rgba(20,32,46,.06), 0 8px 24px rgba(20,32,46,.06); }
+.st-key-login h2 { font-size: 21px; margin: 0 0 6px; color: #1f395f; }
+.hl-lead { color: #5b6472; font-size: 14px; line-height: 1.7; margin: 0 0 20px; }
+.hl-note { color: #8a93a1; font-size: 12px; margin: 14px 0 0; }
+.hl-ng { color: #b42318; font-size: 14px; line-height: 1.7; margin: 0 0 18px; }
+</style>"""
+
+
+def login_gate() -> str:
+    """ログインしていなければログイン画面を出して止める。入ってよい人なら、そのメールアドレスを返す。
+    secrets.toml に [auth] がなければ、ログインなしで通す（手元での確認用）。"""
+    if not auth.enabled():
+        return viewer_email()
+    if st.query_params.get("logout"):          # ヘッダーの「ログアウト」から
+        st.query_params.clear()
+        st.logout()
+        st.stop()
+    st.html(LOGIN_CSS)
+    if not st.user.get("is_logged_in"):         # [auth] があれば、ログインしていない人は False
+        with st.container(key="login"):
+            st.markdown("## 報連相AI 管理画面")
+            st.html('<p class="hl-lead">GLUG の Google アカウントでログインしてください。</p>')
+            st.button("Google でログイン", type="primary", icon=":material/login:", width="stretch", on_click=st.login)
+            st.html('<p class="hl-note">ログインすると、次回からはこの画面を出さずに開けます。</p>')
+        st.stop()
+    email = viewer_email()
+    if not auth.allowed(email, st.user.get("email_verified")):
+        with st.container(key="login"):
+            st.markdown("## 報連相AI 管理画面")
+            st.html(f'<p class="hl-ng">{_html.escape(email or "このアカウント")} では利用できません。'
+                    f'GLUG の Google アカウント（@{_html.escape(config.get("ALLOWED_DOMAINS").split(",")[0].strip())}）でログインし直してください。</p>')
+            st.button("別のアカウントでログインする", icon=":material/logout:", width="stretch", on_click=st.logout)
+        st.stop()
+    return email
+
+
+ME = login_gate()
 
 # 「最新を読み込む」から ?reload=1 付きで開かれたら、読み込み済みの内容を捨てて読み直す
 if st.query_params.get("reload"):
