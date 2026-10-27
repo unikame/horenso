@@ -10,6 +10,9 @@ DEFAULTS = {
     "DELIVERY_ID": "1ZH-5AI3hPZrR3BXsqQHgQaaI0Yxg1q0h9IYoJozN_U4",
     # 配信設定で選べるスペースに必ず出すもの（紐づけタブにないスペース）。「スペースID=名前」を読点区切り
     "EXTRA_SPACES": "spaces/AAQAdiRb6-Q=報連相普及委員会",
+    # Google でログインして入れるアカウント（[auth] を登録したときだけ使う）。ドメインと、例外で入れる人（読点・カンマ区切り）
+    "ALLOWED_DOMAINS": "glug.co.jp",
+    "ALLOWED_EMAILS": "",
     # 読み込んだ内容を使い回す時間（秒）。「最新を読み込む」ボタンで即時更新できる
     "CACHE_TTL": "600",
     # ヘッダーの「報連相チェック」を押したときに開く画面（集計アプリ）
