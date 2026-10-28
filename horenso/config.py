@@ -13,6 +13,8 @@ DEFAULTS = {
     # Google でログインして入れるアカウント（[auth] を登録したときだけ使う）。ドメインと、例外で入れる人（読点・カンマ区切り）
     "ALLOWED_DOMAINS": "glug.co.jp",
     "ALLOWED_EMAILS": "",
+    # 管理画面のすべてのメニューを見られる人（「管理画面を見られる人」タブに加えて。読点・カンマ区切り）
+    "ADMIN_EMAILS": "",
     # 読み込んだ内容を使い回す時間（秒）。「最新を読み込む」ボタンで即時更新できる
     "CACHE_TTL": "600",
     # ヘッダーの「報連相チェック」を押したときに開く画面（集計アプリ）
@@ -30,12 +32,13 @@ TABS = {
     # 配信設定
     "delivery": "配信設定",
     "members": "スペースのメンバー",      # Apps Script が毎朝書く（スペースごとの社内のメンバー）
+    "admins": "管理画面を見られる人",      # ここにメールがある人だけ、配信設定以外のメニューも見られる
     # アンケート回答管理表
     "survey": "フォームの回答 1",
     "settings": "分析",
 }
 LEDGER_KINDS = {"cases", "caselog", "links", "pages", "clients", "linegroups"}
-DELIVERY_KINDS = {"delivery", "members"}
+DELIVERY_KINDS = {"delivery", "members", "admins"}
 
 
 def get(key: str) -> str:
