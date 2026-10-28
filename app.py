@@ -246,6 +246,9 @@ ALL_SPACES_COL = "すべてのスペースを選べる"      # 「する」の�
 
 class NeedRelogin(Exception):
     """スペースの一覧を読む許可がない・切れている（ログインし直すと直る）。"""
+    def __init__(self, msg: str, status: int = 0):
+        super().__init__(msg)
+        self.status = status
 
 
 @st.cache_data(ttl=600, show_spinner="参加しているスペースを読み込んでいます…")
@@ -259,7 +262,7 @@ def _chat_spaces(email: str, token: str) -> list[dict]:
         r = requests.get("https://chat.googleapis.com/v1/spaces", params=params,
                          headers={"Authorization": "Bearer " + token}, timeout=20)
         if r.status_code in (401, 403):
-            raise NeedRelogin(f"Google Chat API {r.status_code}：" + r.text[:300])
+            raise NeedRelogin(f"Google Chat API {r.status_code}：" + r.text[:300], r.status_code)
         r.raise_for_status()
         js = r.json()
         out += [{"id": x["name"], "name": x.get("displayName") or x["name"]} for x in js.get("spaces", []) if x.get("name")]
@@ -283,9 +286,26 @@ def my_chat_spaces(me: str):
         return None
     try:
         return _chat_spaces(me, token)
+    except NeedRelogin as e:
+        if e.status == 401 and _login_expired():
+            # 許可の有効期限（1時間）が切れただけ → 自動でログインし直して、新しい許可をもらう（Google の画面を一瞬通って戻る）
+            st.login()
+            st.stop()
+        CHAT_SPACES_ERROR = str(e)[:300]
+        return None
     except Exception as e:
         CHAT_SPACES_ERROR = str(e)[:300] or type(e).__name__
         return None
+
+
+def _login_expired() -> bool:
+    """ログインのときにもらった許可の有効期限が切れているか（期限が分からなければ False＝自動でログインし直さない）。"""
+    import time
+    try:
+        exp = float(st.user.get("exp") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(exp) and exp < time.time()
 
 
 def my_member_spaces(me: str):
@@ -354,7 +374,7 @@ def settings_page():
                     "今は報連相AIの対象のスペースだけを出しています。", icon=":material/info:")
             if CHAT_SPACES_ERROR:
                 st.caption("理由：" + CHAT_SPACES_ERROR)
-            st.button("ログインし直す", icon=":material/login:", on_click=st.logout)
+            st.button("ログインし直す", icon=":material/login:", on_click=st.login)
         if live is None and not all_ok:
             if member is None:
                 st.warning("参加しているスペースの一覧がまだできていません。明日の朝に自動で作られます。", icon=":material/schedule:")
