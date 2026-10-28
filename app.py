@@ -20,6 +20,7 @@ from horenso import auth, config, sheets
 
 HERE = Path(__file__).parent / "horenso"
 ME = ""          # ログインしている人のメールアドレス（login_gate で決まる）
+IS_ADMIN = True  # すべてのメニューを見られる人か（ログインを使うときは、管理画面を見られる人だけ True）
 
 st.set_page_config(page_title="報連相AI 管理画面", page_icon=":material/space_dashboard:", layout="wide", initial_sidebar_state="collapsed")
 
@@ -58,6 +59,8 @@ def load_or_none(kind: str):
 
 
 def nav_items(pages: list[dict]) -> list[tuple[str, str]]:
+    if not IS_ADMIN:                 # 管理画面を見られる人でなければ、配信設定だけ
+        return [("settings", "配信設定")]
     persons = [p["ページ名"] for p in pages if p.get("種類") == "人" and p.get("ページ名")]
     return [("home", "ホーム")] + [("p:" + p, p) for p in persons] + [("client", "クライアント"), ("settings", "配信設定"), ("survey", "報連相チェック")]
 
@@ -73,9 +76,10 @@ def appbar(items, active: str) -> str:
     who = (f'<span class="who" title="ログイン中">{_html.escape(ME)}</span><a class="btn" href="#" data-logout>ログアウト</a>'
            if ME and auth.enabled() else "")
     return (f'<header class="appbar"><div class="appbar-in"><div class="brand"><h1>報連相AI 管理画面</h1>'
-            f'<div class="meta"><span>{stamp}</span><a class="btn" href="#" data-reload>最新を読み込む</a>'
-            f'<a class="btn" href="https://docs.google.com/spreadsheets/d/{config.get("LEDGER_ID")}/edit" target="_blank" rel="noopener">管理台帳</a>{who}</div></div>'
-            f'<nav class="tabs" aria-label="画面の切り替え">{tabs}</nav></div></header>')
+            + (f'<div class="meta"><span>{stamp}</span><a class="btn" href="#" data-reload>最新を読み込む</a>'
+               f'<a class="btn" href="https://docs.google.com/spreadsheets/d/{config.get("LEDGER_ID")}/edit" target="_blank" rel="noopener">管理台帳</a>{who}</div></div>'
+               if IS_ADMIN else f'<div class="meta">{who}</div></div>')
+            + f'<nav class="tabs" aria-label="画面の切り替え">{tabs}</nav></div></header>')
 
 
 # 画面の中のタブ・「最新を読み込む」の動き（親ページのURLを切り替える）
@@ -144,6 +148,9 @@ def base_css() -> str:
 
 
 def admin_page():
+    if not IS_ADMIN:                 # 管理画面を見られる人でなければ、案件などのデータは読まずに配信設定だけ
+        settings_page()
+        return
     try:
         cases = table(sheets.load("cases"))
         links = table(sheets.load("links"))
@@ -169,6 +176,9 @@ def admin_page():
 
 
 def survey_page():
+    if not IS_ADMIN:
+        settings_page()
+        return
     try:
         values = sheets.load("survey")
     except sheets.SheetError as e:
@@ -249,7 +259,7 @@ def _chat_spaces(email: str, token: str) -> list[dict]:
         r = requests.get("https://chat.googleapis.com/v1/spaces", params=params,
                          headers={"Authorization": "Bearer " + token}, timeout=20)
         if r.status_code in (401, 403):
-            raise NeedRelogin(r.text[:200])
+            raise NeedRelogin(f"Google Chat API {r.status_code}：" + r.text[:300])
         r.raise_for_status()
         js = r.json()
         out += [{"id": x["name"], "name": x.get("displayName") or x["name"]} for x in js.get("spaces", []) if x.get("name")]
@@ -258,19 +268,23 @@ def _chat_spaces(email: str, token: str) -> list[dict]:
             return out
 
 
+CHAT_SPACES_ERROR = ""      # スペースの一覧を読めなかった理由（画面に出す）
+
+
 def my_chat_spaces(me: str):
     """ログインした人が参加している Google Chat のスペース（その人の許可で、その場で読む）。読めなければ None。"""
+    global CHAT_SPACES_ERROR
     try:
         token = st.user.tokens["access"]
     except Exception:
-        return None
+        token = ""
     if not token:
+        CHAT_SPACES_ERROR = "ログインの情報にアクセストークンがありません（Secrets の expose_tokens を確認し、ログインし直してください）"
         return None
     try:
         return _chat_spaces(me, token)
-    except NeedRelogin:
-        return None
-    except Exception:
+    except Exception as e:
+        CHAT_SPACES_ERROR = str(e)[:300] or type(e).__name__
         return None
 
 
@@ -338,6 +352,8 @@ def settings_page():
         elif auth.enabled() and member is not None and not all_ok:
             st.info("参加しているすべてのスペースを出すには、いったんログアウトして、もう一度ログインしてください（スペースの一覧を読む許可をいただきます）。"
                     "今は報連相AIの対象のスペースだけを出しています。", icon=":material/info:")
+            if CHAT_SPACES_ERROR:
+                st.caption("理由：" + CHAT_SPACES_ERROR)
             st.button("ログインし直す", icon=":material/login:", on_click=st.logout)
         if live is None and not all_ok:
             if member is None:
@@ -383,7 +399,7 @@ def settings_page():
             }
             try:
                 if idx is None:
-                    sheets.append_row("delivery", dict(values, **{"役員名": display_name, "メール": me}))
+                    sheets.append_row("delivery", dict(values, **{"役員名": display_name, "メール": me}), unique="メール")
                 else:
                     sheets.save_row("delivery", idx + 2, values)
             except sheets.SheetError as e:
@@ -439,6 +455,20 @@ def login_gate() -> str:
 
 
 ME = login_gate()
+
+
+def admin_emails() -> set[str]:
+    """すべてのメニューを見られる人：配信設定のスプレッドシートの「管理画面を見られる人」タブ ＋ 設定の ADMIN_EMAILS。"""
+    out = {e.strip().lower() for e in str(config.get("ADMIN_EMAILS") or "").replace("、", ",").split(",") if e.strip()}
+    for r in table(load_or_none("admins") or []):
+        e = str(r.get("メール", "")).strip().lower()
+        if "@" in e:
+            out.add(e)
+    return out
+
+
+# ログインを使うときは、「管理画面を見られる人」だけがすべてのメニューを見られる（ほかの人は配信設定だけ）
+IS_ADMIN = (not auth.enabled()) or (ME in admin_emails())
 
 # 「最新を読み込む」から ?reload=1 付きで開かれたら、読み込み済みの内容を捨てて読み直す
 if st.query_params.get("reload"):
