@@ -57,6 +57,17 @@ td.due{white-space:nowrap;width:1%}
 .two{align-items:start}
 table.mx td,table.mx th{text-align:center}
 table.mx td:first-child,table.mx th:first-child{text-align:left}
+/* Good 一覧 */
+.gx{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn-x{font:inherit;font-size:13px;font-weight:600;min-height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);cursor:pointer}
+.btn-x:hover{filter:brightness(1.15)} .btn-x[disabled]{opacity:.45;cursor:default;filter:none}
+.toolbar-g{display:grid;gap:8px} .toolbar-g .row{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center} .toolbar-g .lab2{font-size:12px;color:var(--muted);min-width:3em}
+.notice{border-radius:10px;padding:10px 14px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.notice.ok{background:var(--good-bg);color:var(--good)} .notice.ng{background:var(--crit-bg);color:var(--crit)}
+.notice a{color:inherit;font-weight:600}
+table.gl td{vertical-align:top} table.gl td.d{white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+table.gl .gt{font-weight:600;overflow-wrap:anywhere} table.gl .gr{font-size:12px;color:var(--good);margin-top:3px;overflow-wrap:anywhere}
+table.gl .gs{font-size:12px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 </style></head><body>
 __APPBAR__
 <main class="wrap" id="view" aria-live="polite"></main>
@@ -67,6 +78,7 @@ __APPBAR__
   // ===== データ（Streamlit が台帳から読み込んで埋め込む） =====
   var CASES = __CASES__, LOGS = __LOGS__, LINKS = __LINKS__, PAGES = __PAGES__, CLIENTS = __CLIENTS__;
   var INITIAL_TAB = __TAB__, LEDGER_URL = __LEDGER_URL__;
+  var GOOD_OPT = __GOOD_OPT__ || { days: 30, scope: "all" }, NOTICE = __NOTICE__;
 
   var $ = function(id){ return document.getElementById(id); };
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
@@ -151,7 +163,7 @@ __APPBAR__
   }
 
   // ===== 1つのページ（人・クライアント）の中身 =====
-  var S = { tab: INITIAL_TAB || "home", filter: "open", client: null };
+  var S = { tab: INITIAL_TAB || "home", filter: "open", client: null, gDays: GOOD_OPT.days, gScope: GOOD_OPT.scope };
   function scopeView(opt){
     var cs = opt.cases.slice().sort(sortCases);
     var open = cs.filter(function(c){ return c.open; });
@@ -260,11 +272,60 @@ __APPBAR__
     return h;
   }
 
+  // ===== Good 一覧 =====
+  var G_DAYS = [[30, "直近30日"], [7, "直近7日"], [0, "すべて"]];
+  function inScope(c, scope){
+    if (!scope || scope === "all") return true;
+    var kind = scope.indexOf("p:") === 0 ? "人" : scope.indexOf("c:") === 0 ? "クライアント" : null; if (!kind) return true;
+    var ids = spacesOf(kind, scope.slice(2)).map(function(l){ return l["スペースID（自動）"]; });
+    return ids.indexOf(c.spaceId) >= 0 || (kind === "クライアント" && c.client === scope.slice(2));
+  }
+  function goodList(){
+    return cases.filter(function(c){ return c.status === "Good" && (!S.gDays || daysAgo(c.updated) <= S.gDays) && inScope(c, S.gScope); })
+      .sort(function(a, b){ return String(b.updated).localeCompare(String(a.updated)) || String(b.space).localeCompare(String(a.space)); });
+  }
+  function goodView(){
+    var list = goodList();
+    var scopes = [["all", "すべて"]].concat(persons.map(function(p){ return ["p:" + p, p]; }), clientIds.map(function(cid){ return ["c:" + cid, clientName[cid]]; }));
+    if (!scopes.some(function(x){ return x[0] === S.gScope; })) S.gScope = "all";
+    var h = '<div class="view-head"><div><h2>🟢 Good</h2><div class="lead">報連相が適切に行われて完了した案件です。新しい順に並びます。</div></div>' +
+      '<div class="gx"><button type="button" class="btn-x" data-export' + (list.length ? "" : " disabled") + '>スプレッドシートに書き出す</button></div></div>';
+    if (NOTICE) h += '<div class="notice ' + (NOTICE.ok ? "ok" : "ng") + '" role="status">' + esc(NOTICE.text) +
+      (NOTICE.url ? '<a href="' + esc(NOTICE.url) + '" target="_blank" rel="noopener">Good一覧タブを開く</a>' : "") + '</div>';
+    h += '<section class="panel" style="padding:12px 16px"><div class="toolbar-g">' +
+      '<div class="row"><span class="lab2">期間</span><div class="chips" role="group" aria-label="期間">' + G_DAYS.map(function(d){
+        return '<button type="button" class="chip' + (S.gDays === d[0] ? " on" : "") + '" data-gdays="' + d[0] + '" aria-pressed="' + (S.gDays === d[0]) + '">' + d[1] + '</button>'; }).join("") + '</div></div>' +
+      '<div class="row"><span class="lab2">対象</span><div class="chips" role="group" aria-label="対象">' + scopes.map(function(x){
+        return '<button type="button" class="chip' + (S.gScope === x[0] ? " on" : "") + '" data-gscope="' + esc(x[0]) + '" aria-pressed="' + (S.gScope === x[0]) + '">' + esc(x[1]) + '</button>'; }).join("") + '</div></div>' +
+      '</div></section>';
+    var spaces = {}; list.forEach(function(c){ spaces[c.space] = (spaces[c.space] || 0) + 1; });
+    var topSpace = Object.keys(spaces).sort(function(a, b){ return spaces[b] - spaces[a]; })[0];
+    h += '<div class="grid-kpi">' +
+      kpi("🟢 Good", list.length + "<small>件</small>", list.length ? "good" : "", G_DAYS.filter(function(d){ return d[0] === S.gDays; })[0][1]) +
+      kpi("スペースの数", Object.keys(spaces).length + "<small>か所</small>", "", "Good があったスペース") +
+      kpi("いちばん多いスペース", topSpace ? '<span style="font-size:18px;line-height:1.4;overflow-wrap:anywhere">' + esc(topSpace) + '</span>' : "–", "", topSpace ? spaces[topSpace] + "件" : "") + '</div>';
+    h += panel("Good の一覧", list.length + "件", list.length ? '<div class="tscroll"><table class="gl" style="min-width:640px"><thead><tr><th>最終更新</th><th>スペース</th><th>件名・Goodの理由</th><th>関係者</th></tr></thead><tbody>' + list.map(function(c){
+        return '<tr><td class="d">' + esc(md(c.updated)) + '</td><td class="tw">' + spaceLabel(c) + '</td><td class="tw"><div class="gt">' + esc(c.title) + '</div>' +
+          (c.goodReason ? '<div class="gr">' + esc(c.goodReason) + '</div>' : "") + (c.situation ? '<div class="gs">' + esc(c.situation) + '</div>' : "") + '</td><td class="who">' + esc(c.people || "–") + '</td></tr>';
+      }).join("") + '</tbody></table></div>' : '<p class="empty">この条件の Good の案件はありません。</p>');
+    return h;
+  }
+  // 書き出しは Python（サービスアカウント）が行うので、親ページの URL に export=1 を付けて開き直す
+  function exportGood(){
+    try {
+      var u = new URL(window.parent.location.href);
+      u.search = "?tab=good&gdays=" + S.gDays + "&gscope=" + encodeURIComponent(S.gScope) + "&export=1";
+      var d = window.parent.document, a = d.createElement("a"); a.href = u.toString(); a.target = "_self"; a.style.display = "none";
+      d.body.appendChild(a); a.click(); a.remove();
+    } catch (e) {}
+  }
+
   function render(){
     var t = S.tab, html;
     if (t.indexOf("c:") === 0){ S.client = t.slice(2); t = S.tab = "client"; }
     if (t.indexOf("p:") === 0 && persons.indexOf(t.slice(2)) >= 0) html = personView(t.slice(2));
     else if (t === "client") html = clientView();
+    else if (t === "good") html = goodView();
     else { S.tab = "home"; html = homeView(); }
     $("view").innerHTML = html;
     document.querySelectorAll("[data-nav]").forEach(function(a){
@@ -275,12 +336,20 @@ __APPBAR__
   }
   function go(tab){
     S.tab = tab; S.filter = "open"; render();
-    try { var u = new URL(window.parent.location.href); u.searchParams.set("tab", S.tab === "client" ? "c:" + S.client : S.tab); window.parent.history.replaceState(null, "", u.toString()); window.parent.scrollTo(0, 0); } catch (e) {}
+    try {
+      var u = new URL(window.parent.location.href); u.search = "";
+      u.searchParams.set("tab", S.tab === "client" ? "c:" + S.client : S.tab);
+      if (S.tab === "good"){ u.searchParams.set("gdays", S.gDays); u.searchParams.set("gscope", S.gScope); }
+      window.parent.history.replaceState(null, "", u.toString()); window.parent.scrollTo(0, 0);
+    } catch (e) {}
   }
   window.__localNav = function(t){ if (t === "survey" || t === "settings") return false; go(t); return true; };
 
   document.addEventListener("click", function(e){
     var f = e.target.closest("[data-filter]"); if (f){ S.filter = f.getAttribute("data-filter"); render(); return; }
+    var gd = e.target.closest("[data-gdays]"); if (gd){ S.gDays = +gd.getAttribute("data-gdays"); NOTICE = null; go("good"); return; }
+    var gs = e.target.closest("[data-gscope]"); if (gs){ S.gScope = gs.getAttribute("data-gscope"); NOTICE = null; go("good"); return; }
+    var ex = e.target.closest("[data-export]"); if (ex && !ex.disabled){ ex.disabled = true; ex.textContent = "書き出しています…"; exportGood(); return; }
     var c = e.target.closest("[data-client]"); if (c){ S.client = c.getAttribute("data-client"); go("client"); return; }
     var g = e.target.closest("[data-go]"); if (g){ go(g.getAttribute("data-go")); }
   });
