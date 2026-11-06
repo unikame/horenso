@@ -9,8 +9,10 @@
 
 起動： streamlit run app.py
 """
+import datetime as _dt
 import html as _html
 import json
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -62,7 +64,8 @@ def nav_items(pages: list[dict]) -> list[tuple[str, str]]:
     if not IS_ADMIN:                 # 管理画面を見られる人でなければ、配信設定だけ
         return [("settings", "配信設定")]
     persons = [p["ページ名"] for p in pages if p.get("種類") == "人" and p.get("ページ名")]
-    return [("home", "ホーム")] + [("p:" + p, p) for p in persons] + [("client", "クライアント"), ("settings", "配信設定"), ("survey", "報連相チェック")]
+    return ([("home", "ホーム")] + [("p:" + p, p) for p in persons] +
+            [("client", "クライアント"), ("good", "Good"), ("settings", "配信設定"), ("survey", "報連相チェック")])
 
 
 def appbar(items, active: str) -> str:
@@ -97,8 +100,8 @@ NAV_JS = """<script>
   function goParent(tab, reload){
     var u = parentUrl(); if (!u) { location.reload(); return; }
     var base = u.pathname.replace(/\\/(survey|settings)\\/?$/, "/");
-    if (tab === "survey") { u.pathname = base.replace(/\\/$/, "") + "/survey"; u.search = ""; }
-    else if (tab) { u.pathname = base; u.search = "?tab=" + encodeURIComponent(tab); }
+    // 報連相チェックも ?tab=survey で開く（Streamlit Cloud では /survey のような下の階層が開けないことがあるため）
+    if (tab) { u.pathname = base; u.search = "?tab=" + encodeURIComponent(tab); }
     if (reload) u.searchParams.set("reload", "1");
     topNav(u.toString());
   }
@@ -151,6 +154,9 @@ def admin_page():
     if not IS_ADMIN:                 # 管理画面を見られる人でなければ、案件などのデータは読まずに配信設定だけ
         settings_page()
         return
+    if st.query_params.get("tab") == "survey":     # 報連相チェックの集計（管理台帳は読まない）
+        survey_page()
+        return
     try:
         cases = table(sheets.load("cases"))
         links = table(sheets.load("links"))
@@ -161,6 +167,11 @@ def admin_page():
         show_error(e)
         st.stop()
     tab = st.query_params.get("tab", "home")
+    good_opt = good_options()
+    notice = None
+    if tab == "good" and st.query_params.get("export"):     # Good 一覧の「スプレッドシートに書き出す」から
+        del st.query_params["export"]
+        notice = export_good(cases, links, clients, pages, good_opt)
     if tab == "settings":            # 配信設定（URL は /?tab=settings。Streamlit Cloud の非公開アプリでは /settings のような下の階層が開けないことがあるため）
         settings_page()
         return
@@ -171,8 +182,102 @@ def admin_page():
                 .replace("__CASES__", js(cases)).replace("__LOGS__", js(logs)).replace("__LINKS__", js(links))
                 .replace("__PAGES__", js(pages)).replace("__CLIENTS__", js(clients))
                 .replace("__TAB__", js(tab))
+                .replace("__GOOD_OPT__", js(good_opt)).replace("__NOTICE__", js(notice))
                 .replace("__LEDGER_URL__", js(f"https://docs.google.com/spreadsheets/d/{config.get('LEDGER_ID')}/edit")))
     components.html(page, height=900, scrolling=False)
+
+
+# ---------------- Good 一覧（報連相が適切に完了した案件）と、管理台帳への書き出し ----------------
+GOOD_SHEET = "Good一覧"
+GOOD_DAYS = {30: "直近30日", 7: "直近7日", 0: "すべての期間"}
+STATUSES = ["要確認", "フォロー", "Good", "完了"]
+
+
+def good_options() -> dict:
+    """Good 一覧の絞り込み（URL の gdays・gscope）。画面と書き出しで同じものを使う。"""
+    try:
+        days = int(st.query_params.get("gdays", 30))
+    except ValueError:
+        days = 30
+    return {"days": days if days in GOOD_DAYS else 30, "scope": st.query_params.get("gscope", "all") or "all"}
+
+
+def _ymd(s) -> str:
+    m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", str(s or ""))
+    return f"{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}" if m else ""
+
+
+def good_rows(cases, links, clients, opt) -> list[dict]:
+    """画面の Good 一覧と同じ条件で、Good の案件を新しい順に返す。"""
+    today = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).date()
+    scope = opt["scope"]
+    ids = None
+    if scope.startswith("p:") or scope.startswith("c:"):
+        kind = "人" if scope.startswith("p:") else "クライアント"
+        ids = {l.get("スペースID（自動）") for l in links
+               if l.get("種類") == kind and l.get("対象（ページ名 または クライアントID）") == scope[2:]}
+    out = []
+    for c in cases:
+        if not c.get("案件ID"):
+            continue
+        st_ = next((x for x in STATUSES if x in str(c.get("ステータス", ""))), "フォロー")
+        if st_ != "Good":
+            continue
+        d = _ymd(c.get("最終更新日"))
+        if opt["days"]:
+            if not d or (today - _dt.date.fromisoformat(d)).days > opt["days"]:
+                continue
+        if ids is not None and c.get("スペースID") not in ids and not (scope.startswith("c:") and c.get("クライアントID") == scope[2:]):
+            continue
+        out.append(c)
+    return sorted(out, key=lambda c: (_ymd(c.get("最終更新日")), c.get("スペース", "")), reverse=True)
+
+
+def scope_label(scope: str, clients) -> str:
+    if scope.startswith("p:"):
+        return scope[2:]
+    if scope.startswith("c:"):
+        return next((c.get("会社名") for c in clients if c.get("クライアントID") == scope[2:]), scope[2:])
+    return "すべて"
+
+
+def export_good(cases, links, clients, pages, opt) -> dict:
+    """Good 一覧を、管理台帳の「Good一覧」タブに書き出す（毎回、中身を入れ替える）。結果を画面に出す文を返す。"""
+    import gspread
+    rows = good_rows(cases, links, clients, opt)
+    names = {c.get("クライアントID"): c.get("会社名", "") for c in clients}
+    now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9)))
+    head = ["最終更新日", "スペース", "会社名", "件名", "関係者", "Goodの理由", "今の状況", "決まったこと", "開始日", "案件ID"]
+    data = [[_ymd(c.get("最終更新日")), c.get("スペース", ""), names.get(c.get("クライアントID"), ""), c.get("件名", ""),
+             c.get("関係者", ""), c.get("Goodの理由", ""), c.get("今の状況", ""), c.get("決まったこと", ""),
+             _ymd(c.get("開始日")), c.get("案件ID", "")] for c in rows]
+    cond = (f"書き出し {now:%Y-%m-%d %H:%M}（{ME or '管理画面'}）／期間：{GOOD_DAYS[opt['days']]}／"
+            f"対象：{scope_label(opt['scope'], clients)}／{len(rows)}件")
+    sa = ""
+    try:
+        gc, sa = sheets._client()
+        book = gc.open_by_key(config.get("LEDGER_ID"))
+        try:
+            ws = book.worksheet(GOOD_SHEET)
+        except gspread.WorksheetNotFound:
+            ws = book.add_worksheet(title=GOOD_SHEET, rows=len(data) + 10, cols=len(head))
+        ws.clear()
+        ws.resize(rows=max(len(data) + 2, 10), cols=len(head))
+        ws.update(range_name="A1", values=[[cond] + [""] * (len(head) - 1), head] + data, value_input_option="RAW")
+        ws.freeze(rows=2)
+    except gspread.exceptions.APIError as e:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+        if code == 403:
+            return {"ok": False, "text": "管理台帳に書き込む権限がありません。管理台帳の「共有」で、" + (sa or "管理画面のサービスアカウント") +
+                    " を「編集者」にしてから、もう一度お試しください。"}
+        return {"ok": False, "text": f"書き出せませんでした（{code}）。少し待ってから、もう一度お試しください。"}
+    except PermissionError:
+        return {"ok": False, "text": "管理台帳に書き込む権限がありません。管理台帳の「共有」で、" + (sa or "管理画面のサービスアカウント") +
+                " を「編集者」にしてから、もう一度お試しください。"}
+    except Exception as e:      # 通信の失敗など
+        return {"ok": False, "text": "書き出せませんでした（" + (str(e)[:120] or type(e).__name__) + "）。"}
+    return {"ok": True, "text": f"管理台帳の「{GOOD_SHEET}」タブに {len(rows)}件 を書き出しました（{now:%H:%M}）。",
+            "url": f"https://docs.google.com/spreadsheets/d/{config.get('LEDGER_ID')}/edit#gid={ws.id}"}
 
 
 def survey_page():
