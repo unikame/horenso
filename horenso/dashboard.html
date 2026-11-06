@@ -270,20 +270,34 @@ __APPBAR__
   function parseSurvey(values){
     var sv = S.sv;
     if (!values || !values.length){ sv.rows = []; return; }
-    var head = values[0].map(String), cols = { name: -1, dept: -1, free: [] };
+    var head = values[0].map(String), cols = { name: -1, dept: -1, mail: -1, free: [] };
     head.forEach(function(h, i){
-      if (/氏名|名前/.test(h) && cols.name < 0) cols.name = i;
+      if (/メール/.test(h) && cols.mail < 0) cols.mail = i;
+      else if (/氏名|名前/.test(h) && cols.name < 0) cols.name = i;
       else if (/部署|所属/.test(h) && cols.dept < 0) cols.dept = i;
       ITEMS.forEach(function(it){ if (h.indexOf(it.mark) >= 0) cols[it.key] = i; });
     });
     var lastScore = Math.max.apply(null, ITEMS.map(function(it){ return cols[it.key]; }).filter(function(i){ return i != null; }).concat([0]));
-    head.forEach(function(h, i){ if (i > lastScore && h.trim()) cols.free.push({ idx: i, label: shortHeader(h) }); });
+    head.forEach(function(h, i){ if (i > lastScore && i !== cols.mail && h.trim()) cols.free.push({ idx: i, label: shortHeader(h) }); });
     sv.cols = cols;
+    // 回答した人は、メールアドレスで見分ける（10/23 からフォームに氏名の質問がなく、氏名が空欄のため）。
+    // 氏名・部署が空欄の回答は、同じメールアドレスの別の回答に書かれた氏名・部署を使う。どちらもなければメールアドレスを表示する
+    function cell(r, i){ return i >= 0 ? String(r[i] || "").trim() : ""; }
+    function mailOf(r){ return cell(r, cols.mail).toLowerCase(); }
+    var known = {};
+    values.slice(1).forEach(function(r){
+      var m = mailOf(r); if (!m) return;
+      var k = known[m] = known[m] || {};
+      if (cell(r, cols.name)) k.name = cell(r, cols.name);
+      if (cell(r, cols.dept)) k.dept = cell(r, cols.dept);
+    });
     var byKey = {};
     values.slice(1).forEach(function(r){
       var d = parseStamp(r[0]); if (!d) return;
-      var rec = { at: d, week: fridayOf(d), name: String(r[cols.name] || "").trim() || "（氏名なし）", dept: String(r[cols.dept] || "").trim() || "未記入", free: {} };
-      rec.month = rec.week.slice(0, 7); rec.key = rec.name.replace(/\s+/g, "");
+      var m = mailOf(r), kn = known[m] || {};
+      var name = cell(r, cols.name) || kn.name || m || "（氏名なし）";
+      var rec = { at: d, week: fridayOf(d), name: name, dept: cell(r, cols.dept) || kn.dept || "未記入", free: {} };
+      rec.month = rec.week.slice(0, 7); rec.key = m || name.replace(/\s+/g, "");
       ITEMS.forEach(function(it){ rec[it.key] = cols[it.key] != null ? score(r[cols[it.key]]) : null; });
       if (ITEMS.some(function(it){ return rec[it.key] == null; })) return;
       rec.total = rec.r + rec.c + rec.s;
